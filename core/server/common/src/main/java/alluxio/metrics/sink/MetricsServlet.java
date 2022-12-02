@@ -11,13 +11,20 @@
 
 package alluxio.metrics.sink;
 
+import com.codahale.metrics.MetricFilter;
 import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Snapshot;
+import com.codahale.metrics.Timer;
 import com.codahale.metrics.json.MetricsModule;
+import com.fasterxml.jackson.databind.Module;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.concurrent.NotThreadSafe;
@@ -84,5 +91,34 @@ public class MetricsServlet implements Sink {
   public void stop() {}
 
   @Override
-  public void report() {}
+  public void report() {
+    StringBuilder sb = new StringBuilder();
+    for (Map.Entry<String, Timer> entry : mMetricsRegistry.getTimers().entrySet()) {
+      Snapshot snapshot = entry.getValue().getSnapshot();
+      long[] values = snapshot.getValues();
+      long[] buckets = new long[15];
+      for (long value : values) {
+        long valueInMillis = TimeUnit.NANOSECONDS.toMillis(value);
+        int idx = valueInMillis == 0L ? 0 : (Long.numberOfTrailingZeros(valueInMillis) + 1);
+        ++buckets[idx];
+      }
+      sb.append("\ncount" + ":" + entry.getValue().getCount());
+      double durationFactor = 1.0 / TimeUnit.MILLISECONDS.toNanos(1);
+      sb.append("\nmax" + ":" + snapshot.getMax() * durationFactor);
+      sb.append("\nmean" + ":" + snapshot.getMean() * durationFactor);
+      sb.append("\nmin" + ":" + snapshot.getMin() * durationFactor);
+
+      sb.append("\np50" + ":" + snapshot.getMedian() * durationFactor);
+      sb.append("\np95" + ":" + snapshot.get95thPercentile() * durationFactor);
+      sb.append("\nduration_units" + ":" + TimeUnit.MILLISECONDS.toString().toLowerCase(Locale.US));
+      int st = 0;
+      int ed = 0;
+      for (int i=0; i<buckets.length; ++i) {
+        ed = 1 << i;
+        sb.append("\n[" + st + "-" + ed + "]:" + buckets[i]);
+        st = ed;
+      }
+    }
+    String output = sb.toString();
+  }
 }
