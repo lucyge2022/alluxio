@@ -50,9 +50,12 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
@@ -243,19 +246,19 @@ public abstract class ObjectUnderFileSystem extends BaseUnderFileSystem {
   @ThreadSafe
   protected abstract class OperationBuffer<T> {
     /** A list of the successful operations for each batch. */
-    private final ArrayList<Future<List<T>>> mBatchesResult;
+    private final LinkedBlockingQueue<Future<List<T>>> mBatchesResult;
     /** Buffer for a batch of inputs. */
-    private final List<T> mCurrentBatchBuffer;
+    private final ArrayBlockingQueue<T> mCurrentBatchBuffer;
     /** Total number of inputs to be operated on across batches. */
-    protected int mEntriesAdded;
+    protected AtomicInteger mEntriesAdded;
 
     /**
      * Construct a new {@link OperationBuffer} instance.
      */
     protected OperationBuffer() {
-      mBatchesResult = new ArrayList<>();
-      mCurrentBatchBuffer = new ArrayList<>();
-      mEntriesAdded = 0;
+      mBatchesResult = new LinkedBlockingQueue<>();
+      mCurrentBatchBuffer = new ArrayBlockingQueue<>(getBatchSize());
+      mEntriesAdded = new AtomicInteger(0);
     }
 
     /**
@@ -279,13 +282,13 @@ public abstract class ObjectUnderFileSystem extends BaseUnderFileSystem {
      * @param input the input to operate on
      * @throws IOException if a non-Alluxio error occurs
      */
-    public synchronized void add(T input) throws IOException {
-      if (mCurrentBatchBuffer.size() == getBatchSize()) {
-        // Batch is full
+    public void add(T input) throws IOException {
+      boolean offered = mCurrentBatchBuffer.offer(input);
+      while (!offered) {
+        // if full, submit batch and offer again
         submitBatch();
+        offered = mCurrentBatchBuffer.offer(input);
       }
-      mCurrentBatchBuffer.add(input);
-      mEntriesAdded++;
     }
 
     /**
@@ -294,11 +297,14 @@ public abstract class ObjectUnderFileSystem extends BaseUnderFileSystem {
      * @return a list of inputs for successful operations
      * @throws IOException if a non-Alluxio error occurs
      */
-    public synchronized List<T> getResult() throws IOException {
+    public List<T> getResult() throws IOException {
       submitBatch();
       List<T> result = new ArrayList<>();
-      for (Future<List<T>> list : mBatchesResult) {
+      while (mBatchesResult.peek() != null) {
         try {
+          Future<List<T>> list = mBatchesResult.poll();
+          if (list == null)
+            break;
           result.addAll(list.get());
         } catch (InterruptedException e) {
           Thread.currentThread().interrupt();
@@ -321,18 +327,25 @@ public abstract class ObjectUnderFileSystem extends BaseUnderFileSystem {
      * Process the current batch asynchronously.
      */
     private void submitBatch() throws IOException {
-      if (mCurrentBatchBuffer.size() != 0) {
-        List<T> batch = new ArrayList<>(mCurrentBatchBuffer);
-        mCurrentBatchBuffer.clear();
-        mBatchesResult.add(mExecutorService.submit(() -> {
-          try {
-            return operate(batch);
-          } catch (IOException e) {
-            // Do not append to success list
-            return Collections.emptyList();
-          }
-        }));
-      }
+        List<T> batch = new ArrayList<>();
+        int drained = mCurrentBatchBuffer.drainTo(batch, getBatchSize());
+        if (drained > 0) {
+          /* (TODO) current threadpool, though thread num fixed, the backing
+          blocking q for tasks is unbounded. We should make it bounded, and prepare
+          for the thrown RejectedExecutionException, meantime make sure we only collect
+          num of entries that are actually submitted and accounted for in mEntriesAdded.
+           */
+          Future<List<T>> submittedFut = mExecutorService.submit(() -> {
+            try {
+              return operate(batch);
+            } catch (IOException e) {
+              // Do not append to success list
+              return Collections.emptyList();
+            }
+          });
+          mEntriesAdded.addAndGet(drained);
+          mBatchesResult.offer(submittedFut);
+        }
     }
   }
 
@@ -418,9 +431,9 @@ public abstract class ObjectUnderFileSystem extends BaseUnderFileSystem {
     }
     deleteBuffer.add(stripPrefixIfPresent(convertToFolderName(path)));
     int filesDeleted = deleteBuffer.getResult().size();
-    if (filesDeleted != deleteBuffer.mEntriesAdded) {
+    if (filesDeleted != deleteBuffer.mEntriesAdded.get()) {
       LOG.warn("Failed to delete directory, successfully deleted {} files out of {}.",
-          filesDeleted, deleteBuffer.mEntriesAdded);
+          filesDeleted, deleteBuffer.mEntriesAdded.get());
       return false;
     }
     return true;
@@ -648,9 +661,9 @@ public abstract class ObjectUnderFileSystem extends BaseUnderFileSystem {
     DeleteBuffer deleteBuffer = new DeleteBuffer();
     boolean result = renameDirectoryInternal(src, dst, deleteBuffer);
     int fileDeleted = deleteBuffer.getResult().size();
-    if (fileDeleted != deleteBuffer.mEntriesAdded) {
+    if (fileDeleted != deleteBuffer.mEntriesAdded.get()) {
       LOG.warn("Failed to rename directory, successfully deleted {} files out of {}.",
-          fileDeleted, deleteBuffer.mEntriesAdded);
+          fileDeleted, deleteBuffer.mEntriesAdded.get());
       return false;
     }
     return result;
@@ -690,9 +703,9 @@ public abstract class ObjectUnderFileSystem extends BaseUnderFileSystem {
     }
     // Get result of parallel file renames
     int filesRenamed = buffer.getResult().size();
-    if (filesRenamed != buffer.mEntriesAdded) {
+    if (filesRenamed != buffer.mEntriesAdded.get()) {
       LOG.warn("Failed to rename directory, successfully renamed {} files out of {}.",
-          filesRenamed, buffer.mEntriesAdded);
+          filesRenamed, buffer.mEntriesAdded.get());
       return false;
     }
     return true;
