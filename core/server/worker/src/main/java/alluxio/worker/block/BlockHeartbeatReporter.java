@@ -11,15 +11,13 @@
 
 package alluxio.worker.block;
 
+import alluxio.conf.Configuration;
+import alluxio.conf.PropertyKey;
 import com.google.common.collect.Lists;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.Map.Entry;
 import javax.annotation.concurrent.ThreadSafe;
 
@@ -71,6 +69,16 @@ public final class BlockHeartbeatReporter extends AbstractBlockStoreEventListene
     synchronized (mLock) {
       BlockHeartbeatReport report
           = new BlockHeartbeatReport(mAddedBlocks, mRemovedBlocks, mLostStorage);
+      if (Configuration.getInt(PropertyKey.WORKER_FAKE_HEARTBEAT_REPORT_BLOCKS) > 0) {
+        int numOfFakeRemovedBlks = Configuration.getInt(PropertyKey.WORKER_FAKE_HEARTBEAT_REPORT_BLOCKS);
+        Random random = new Random();
+        List<Long> fakeRemovedBlks = new ArrayList<>();
+        for (int i=0;i<numOfFakeRemovedBlks;i++) {
+          fakeRemovedBlks.add(random.nextLong());
+        }
+        report
+            = new BlockHeartbeatReport(mAddedBlocks, fakeRemovedBlks, mLostStorage);
+      }
       // Clear added and removed blocks
       mAddedBlocks.clear();
       mRemovedBlocks.clear();

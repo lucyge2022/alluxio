@@ -31,9 +31,12 @@ import alluxio.master.journal.JournalContext;
 import alluxio.master.journal.NoopJournalContext;
 import alluxio.proto.journal.File.UpdateInodeEntry;
 
+import com.google.common.collect.Iterators;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.Set;
 import javax.annotation.concurrent.NotThreadSafe;
 
@@ -61,16 +64,24 @@ final class InodeTtlChecker implements HeartbeatExecutor {
   public void heartbeat() throws InterruptedException {
     Set<TtlBucket> expiredBuckets = mTtlBuckets.getExpiredBuckets(System.currentTimeMillis());
     for (TtlBucket bucket : expiredBuckets) {
-      for (Inode inode : bucket.getInodes()) {
+      Iterator<Long> inodeIdsIt = bucket.getInodeIds().iterator();
+      if (!TtlBucket.sSaveInodeIdOnly)
+        inodeIdsIt = Iterators.transform(bucket.getInodes().iterator(), (inode) -> inode.getId());
+//      for (Inode inode : bucket.getInodes()) {
+      while (inodeIdsIt.hasNext()) {
+        long inodeId = inodeIdsIt.next();
         // Throw if interrupted.
         if (Thread.interrupted()) {
           throw new InterruptedException("InodeTtlChecker interrupted.");
         }
         AlluxioURI path = null;
+        Inode inode = null;
         try (LockedInodePath inodePath =
             mInodeTree.lockFullInodePath(
-                inode.getId(), LockPattern.READ, NoopJournalContext.INSTANCE)
+                inodeId, LockPattern.READ, NoopJournalContext.INSTANCE)
+//                inode.getId(), LockPattern.READ, NoopJournalContext.INSTANCE)
         ) {
+          inode = inodePath.getInode();
           path = inodePath.getUri();
         } catch (FileDoesNotExistException e) {
           // The inode has already been deleted, nothing needs to be done.

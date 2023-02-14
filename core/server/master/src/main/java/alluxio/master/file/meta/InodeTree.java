@@ -187,7 +187,7 @@ public class InodeTree implements DelegatingJournaled {
   /** Manager for inode locking. */
   private final InodeLockManager mInodeLockManager;
 
-  private final ReadOnlyInodeStore mInodeStore;
+  public final ReadOnlyInodeStore mInodeStore;
 
   /**
    * Class for managing the persistent state of the inode tree. All metadata changes must go

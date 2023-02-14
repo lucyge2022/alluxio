@@ -12,6 +12,8 @@
 package alluxio.master.file.meta;
 
 import alluxio.Constants;
+import alluxio.conf.Configuration;
+import alluxio.conf.PropertyKey;
 import alluxio.master.journal.checkpoint.CheckpointInputStream;
 import alluxio.master.journal.checkpoint.CheckpointName;
 import alluxio.master.journal.checkpoint.CheckpointOutputStream;

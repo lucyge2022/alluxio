@@ -50,6 +50,7 @@ import alluxio.security.user.ServerUserState;
 import alluxio.util.executor.ExecutorServiceFactories;
 import alluxio.util.io.FileUtils;
 import alluxio.wire.FileInfo;
+import alluxio.wire.Property;
 import alluxio.wire.WorkerNetAddress;
 import alluxio.worker.AbstractWorker;
 import alluxio.worker.SessionCleaner;
@@ -207,7 +208,8 @@ public class DefaultBlockWorker extends AbstractWorker implements BlockWorker {
     Preconditions.checkNotNull(mAddress, "mAddress");
 
     // Setup BlockMasterSync
-    setupBlockMasterSync();
+    if (Configuration.getBoolean(PropertyKey.WORKER_HEARTBEAT_ENABLED))
+      setupBlockMasterSync();
 
     // Setup PinListSyncer
     PinListSync pinListSync = mResourceCloser.register(

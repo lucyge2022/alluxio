@@ -18,6 +18,7 @@ import com.google.common.base.Objects;
 
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
@@ -34,6 +35,8 @@ public final class TtlBucket implements Comparable<TtlBucket> {
    */
   private static long sTtlIntervalMs =
       Configuration.getMs(PropertyKey.MASTER_TTL_CHECKER_INTERVAL_MS);
+  public static boolean sSaveInodeIdOnly =
+      Configuration.getBoolean(PropertyKey.MASTER_TTL_SAVE_INODEID_ONLY);
   /**
    * Each bucket has a time to live interval, this value is the start of the interval, interval
    * value is the same as the configuration of {@link PropertyKey#MASTER_TTL_CHECKER_INTERVAL_MS}.
@@ -44,6 +47,7 @@ public final class TtlBucket implements Comparable<TtlBucket> {
    * is from inode id to inode.
    */
   private final ConcurrentHashMap<Long, Inode> mInodes;
+  private final ConcurrentSkipListSet<Long> mInodeList;
 
   /**
    * Creates a new instance of {@link TtlBucket}.
@@ -53,6 +57,7 @@ public final class TtlBucket implements Comparable<TtlBucket> {
   public TtlBucket(long startTimeMs) {
     mTtlIntervalStartTimeMs = startTimeMs;
     mInodes = new ConcurrentHashMap<>();
+    mInodeList = new ConcurrentSkipListSet<>();
   }
 
   /**
@@ -85,6 +90,10 @@ public final class TtlBucket implements Comparable<TtlBucket> {
     return mInodes.values();
   }
 
+  public Collection<Long> getInodeIds() {
+    return mInodeList;
+  }
+
   /**
    * Adds a inode to the bucket.
    *
@@ -92,6 +101,8 @@ public final class TtlBucket implements Comparable<TtlBucket> {
    * @return true if a new inode was added to the bucket
    */
   public boolean addInode(Inode inode) {
+    if (sSaveInodeIdOnly)
+      return mInodeList.add(inode.getId());
     return mInodes.put(inode.getId(), inode) == null;
   }
 
@@ -102,6 +113,8 @@ public final class TtlBucket implements Comparable<TtlBucket> {
    * @return true if a inode was removed
    */
   public boolean removeInode(InodeView inode) {
+    if (sSaveInodeIdOnly)
+      return mInodeList.remove(inode.getId());
     return mInodes.remove(inode.getId()) != null;
   }
 
@@ -109,6 +122,8 @@ public final class TtlBucket implements Comparable<TtlBucket> {
    * @return the number of inodes in the bucket
    */
   public int size() {
+    if (sSaveInodeIdOnly)
+      return mInodeList.size();
     return mInodes.size();
   }
 

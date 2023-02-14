@@ -4476,6 +4476,18 @@ public final class PropertyKey implements Comparable<PropertyKey> {
           .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
           .setScope(Scope.WORKER)
           .build();
+  public static final PropertyKey WORKER_HEARTBEAT_ENABLED =
+      booleanBuilder("debug.blockmastersync.heartbeat")
+          .setDefaultValue(true)
+          .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
+          .setScope(Scope.WORKER)
+          .build();
+  public static final PropertyKey WORKER_FAKE_HEARTBEAT_REPORT_BLOCKS =
+      intBuilder("debug.blockmastersync.fake.heartbeat.num.removeblocks")
+          .setDefaultValue(-1)
+          .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
+          .setScope(Scope.WORKER)
+          .build();
   public static final PropertyKey WORKER_REGISTER_STREAM_ENABLED =
       booleanBuilder(Name.WORKER_REGISTER_STREAM_ENABLED)
           .setDefaultValue(true)
@@ -7282,6 +7294,12 @@ public final class PropertyKey implements Comparable<PropertyKey> {
           .setDefaultValue(true)
           .setDescription("Whether to enable start JVM monitor thread on the master. This will "
               + "start a thread to detect JVM-wide pauses induced by GC or other reasons.")
+          .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
+          .setScope(Scope.MASTER)
+          .build();
+  public static final PropertyKey MASTER_TTL_SAVE_INODEID_ONLY =
+      booleanBuilder("debug.ttl.save.inodeid.only")
+          .setDefaultValue(false)
           .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
           .setScope(Scope.MASTER)
           .build();
