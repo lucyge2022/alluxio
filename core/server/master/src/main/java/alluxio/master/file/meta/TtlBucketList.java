@@ -74,7 +74,11 @@ public final class TtlBucketList implements Checkpointed {
    * @return the total number of inodes in all the buckets
    */
   public long getNumInodes() {
-    return mNumInodes.get();
+    int count = 0;
+    for (TtlBucket bucket : mBucketList)
+      count += bucket.size();
+    return count;
+//    return mNumInodes.get();
   }
 
   /**

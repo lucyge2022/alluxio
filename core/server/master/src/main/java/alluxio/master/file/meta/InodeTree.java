@@ -61,19 +61,15 @@ import alluxio.util.interfaces.Scoped;
 import alluxio.wire.OperationId;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Iterables;
+import alluxio.resource.CloseableIterator;
+import com.google.common.collect.Iterators;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.text.MessageFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.locks.Lock;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -1070,6 +1066,72 @@ public class InodeTree implements DelegatingJournaled {
       newInode.setOwner(ancestorInode.getOwner().intern());
       newInode.setGroup(ancestorInode.getGroup().intern());
     }
+  }
+
+  public CloseableIterator<? extends Inode> getDescendants(LockedInodePath inodePath, boolean lazyLoad) {
+    return gatherDescendantsNoLock(inodePath);
+  }
+
+  private CloseableIterator<? extends Inode> gatherDescendantsNoLock(LockedInodePath inodePath) {
+    Inode inode = inodePath.getInodeOrNull();
+    if (inode == null || inode.isFile() || !mInodeStore.hasChildren(inode.asDirectory())) {
+      return CloseableIterator.noopCloseable(Collections.emptyIterator());
+    }
+
+    CloseableIterator<? extends Inode> it = mInodeStore.getChildren(inode.asDirectory());
+    Iterator<Inode> iter =  new Iterator<Inode>() {
+      Stack<CloseableIterator<? extends Inode>> curDirItStack_ = new Stack<>();
+
+      @Override
+      public boolean hasNext() {
+        if (curDirItStack_.isEmpty())
+          return it.hasNext();
+        while (!curDirItStack_.isEmpty()) {
+          CloseableIterator<? extends Inode> dirIt = curDirItStack_.peek();
+          if (dirIt.hasNext())
+            return true;
+          try(CloseableIterator<? extends Inode> dirItPoped = curDirItStack_.pop())
+          {}
+        }
+        return false;
+      }
+
+      @Override
+      public Inode next() {
+        if (!hasNext()) {
+          throw new NoSuchElementException("No more children in iterator");
+        }
+        CloseableIterator<? extends Inode> dirIt = curDirItStack_.isEmpty() ? it : curDirItStack_.peek();
+        Inode nextInode = dirIt.next();
+        if (nextInode.isDirectory())
+          curDirItStack_.push(mInodeStore.getChildren(nextInode.asDirectory()));
+        return nextInode;
+      }
+    };
+    return CloseableIterator.create(iter, (any) -> it.close());
+
+//    descendantsIts.add(it);
+//    try (CloseableIterator<? extends Inode> it = mInodeStore.getChildren(inode.asDirectory())) {
+//      while (it.hasNext()) {
+//        Inode child = it.next();
+//        LockedInodePath childPath;
+//        try {
+//          childPath = inodePath.lockChild(child, LockPattern.WRITE_EDGE);
+//        } catch (InvalidPathException e) {
+//          // Child does not exist.
+//          continue;
+//        }
+//        try {
+//          descendants.add(childPath);
+//        } catch (Error e) {
+//          // If adding to descendants fails due to OOM, this object
+//          // will not be tracked so we must close it manually
+//          childPath.close();
+//          throw e;
+//        }
+//        gatherDescendants(childPath, descendants);
+//      }
+//    }
   }
 
   /**

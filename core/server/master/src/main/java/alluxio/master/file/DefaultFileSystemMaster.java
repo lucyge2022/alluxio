@@ -3171,10 +3171,20 @@ public class DefaultFileSystemMaster extends CoreMaster
     long opTimeMs = mClock.millis();
     List<Inode> freeInodes = new ArrayList<>();
     freeInodes.add(inode);
-    try (LockedInodePathList descendants = mInodeTree.getDescendants(inodePath)) {
+//    try (LockedInodePathList descendants = mInodeTree.getDescendants(inodePath)) {
+    try(CloseableIterator<? extends Inode> descendantsIt = mInodeTree.getDescendants(inodePath, true)) {
       int journalFlushCounter = 0;
-      for (LockedInodePath descedant : Iterables.concat(descendants,
-          Collections.singleton(inodePath))) {
+//      for (LockedInodePath descedant : Iterables.concat(descendants,
+//          Collections.singleton(inodePath))) {
+      while(descendantsIt.hasNext()) {
+        LockedInodePath descedant;
+        try {
+          descedant = inodePath.lockChild(descendantsIt.next(), LockPattern.WRITE_EDGE);
+        } catch (InvalidPathException e) {
+          // Child does not exist.
+          continue;
+        }
+
         Inode freeInode = descedant.getInodeOrNull();
 
         if (freeInode != null && freeInode.isFile()) {
@@ -3785,8 +3795,18 @@ public class DefaultFileSystemMaster extends CoreMaster
           mPermissionChecker
               .checkSetAttributePermission(inodePath, rootRequired, ownerRequired, writeRequired);
           if (context.getOptions().getRecursive()) {
-            try (LockedInodePathList descendants = mInodeTree.getDescendants(inodePath)) {
-              for (LockedInodePath childPath : descendants) {
+            try(CloseableIterator<? extends Inode> descendantsIt = mInodeTree.getDescendants(inodePath, true)) {
+//        for (LockedInodePath childPath : descendants) {
+              while(descendantsIt.hasNext()) {
+                LockedInodePath childPath;
+                try {
+                  childPath = inodePath.lockChild(descendantsIt.next(), LockPattern.WRITE_EDGE);
+                } catch (InvalidPathException e) {
+                  // Child does not exist.
+                  continue;
+                }
+//            try (LockedInodePathList descendants = mInodeTree.getDescendants(inodePath)) {
+//              for (LockedInodePath childPath : descendants) {
                 mPermissionChecker
                     .checkSetAttributePermission(childPath, rootRequired, ownerRequired,
                         writeRequired);
@@ -3833,8 +3853,17 @@ public class DefaultFileSystemMaster extends CoreMaster
     long opTimeMs = mClock.millis();
     if (context.getOptions().getRecursive() && targetInode.isDirectory()) {
       int journalFlushCounter = 0;
-      try (LockedInodePathList descendants = mInodeTree.getDescendants(inodePath)) {
-        for (LockedInodePath childPath : descendants) {
+//      try (LockedInodePathList descendants = mInodeTree.getDescendants(inodePath)) {
+      try(CloseableIterator<? extends Inode> descendantsIt = mInodeTree.getDescendants(inodePath, true)) {
+//        for (LockedInodePath childPath : descendants) {
+        while(descendantsIt.hasNext()) {
+          LockedInodePath childPath;
+          try {
+            childPath = inodePath.lockChild(descendantsIt.next(), LockPattern.WRITE_EDGE);
+          } catch (InvalidPathException e) {
+            // Child does not exist.
+            continue;
+          }
           rpcContext.throwIfCancelled();
           setAttributeSingleFile(rpcContext, childPath, true, opTimeMs, context);
           journalFlushCounter++;
