@@ -42,9 +42,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.stream.IntStream;
 
 /**
  * Single node stress test.
@@ -114,6 +113,7 @@ public class StressWorkerBench extends AbstractStressBench<WorkerBenchTaskResult
     if (mParameters.mIsRandom) {
       rand = new Random(mParameters.mRandomSeed);
     }
+
     for (int i = 0; i < mParameters.mNumFiles; i++) {
       Path filePath = new Path(path, "data" + i);
       mFilePaths[i] = filePath;
@@ -130,6 +130,7 @@ public class StressWorkerBench extends AbstractStressBench<WorkerBenchTaskResult
     }
 
     if (!mBaseParameters.mDistributed) {
+
       // set hdfs conf for preparation client
       Configuration hdfsConf = new Configuration();
       // force delete, create dirs through to UFS
@@ -151,25 +152,50 @@ public class StressWorkerBench extends AbstractStressBench<WorkerBenchTaskResult
         byte[] buffer = new byte[(int) FormatUtils.parseSpaceSize(mParameters.mBufferSize)];
         Arrays.fill(buffer, (byte) 'A');
 
-        for (int i = 0; i < mParameters.mNumFiles; i++) {
-          Path filePath = mFilePaths[i];
-          try (FSDataOutputStream mOutStream = prepareFs
-              .create(filePath, false, buffer.length, (short) 1,
-                  FormatUtils.parseSpaceSize(mParameters.mBlockSize))) {
-            while (true) {
-              int bytesToWrite = (int) Math.min(fileSize - mOutStream.getPos(), buffer.length);
-              if (bytesToWrite == 0) {
-                break;
+        ExecutorService prepareEs = Executors.newFixedThreadPool(mParameters.mThreads);
+        List<Callable<Integer>> callables = new ArrayList<>();
+        IntStream.range(0, mParameters.mThreads).forEach(j -> {
+          callables.add(() -> {
+            int processed = 0;
+            for (int i = 0; i < mParameters.mNumFiles; i++) {
+              if (i % mParameters.mThreads != j)
+                continue;
+              Path filePath = mFilePaths[i];
+              try {
+                try (FSDataOutputStream mOutStream = prepareFs
+                    .create(filePath, false, buffer.length, (short) 1,
+                        FormatUtils.parseSpaceSize(mParameters.mBlockSize))) {
+                  while (true) {
+                    int bytesToWrite = (int) Math.min(fileSize - mOutStream.getPos(), buffer.length);
+                    if (bytesToWrite == 0) {
+                      break;
+                    }
+                    mOutStream.write(buffer, 0, bytesToWrite);
+                  }
+                }
+                if (mParameters.mFree && Constants.SCHEME.equals(filePath.toUri().getScheme())) {
+                  // free the alluxio file
+                  alluxio.client.file.FileSystem.Factory.get().free(new AlluxioURI(filePath.toString()));
+                  LOG.info("Freed file before reading: " + filePath);
+                }
+              } catch (Exception ex) {
+                LOG.error("failed to create {}, ex:{}", filePath, ex.getMessage());
               }
-              mOutStream.write(buffer, 0, bytesToWrite);
+              processed++;
             }
+            return processed;
+          });
+        });
+        List<Future<Integer>> futures = prepareEs.invokeAll(callables);
+        futures.forEach((result) -> {
+          try {
+            System.out.println("processed num:" + result.get());
+          } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+          } catch (ExecutionException e) {
+            throw new RuntimeException(e);
           }
-          if (mParameters.mFree && Constants.SCHEME.equals(filePath.toUri().getScheme())) {
-            // free the alluxio file
-            alluxio.client.file.FileSystem.Factory.get().free(new AlluxioURI(filePath.toString()));
-            LOG.info("Freed file before reading: " + filePath);
-          }
-        }
+        });
       }
     }
 
