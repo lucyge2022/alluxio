@@ -76,4 +76,9 @@ public interface DataBuffer {
    * Releases the underlying buffer of this DataBuffer if no longer needed.
    */
   void release();
+
+  /*
+  Position read position pointer at given pos.
+   */
+  void seek(int pos);
 }

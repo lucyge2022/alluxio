@@ -64,6 +64,7 @@ public class BufferCachingGrpcDataReader {
   /** The next pos to read. */
   @VisibleForTesting
   protected long mPosToRead;
+  private final long mChunkSize;
 
   /**
    * Creates an instance of {@link BufferCachingGrpcDataReader}.
@@ -88,12 +89,14 @@ public class BufferCachingGrpcDataReader {
     mStream = stream;
     long blockSize = mReadRequest.getLength() + mReadRequest.getOffset();
     long chunkSize = mReadRequest.getChunkSize();
+    mChunkSize = chunkSize;
     int buffCount = (int) (blockSize / chunkSize);
     if ((blockSize % chunkSize) != 0) {
       buffCount += 1;
     }
     mDataBuffers = new DataBuffer[buffCount];
   }
+
 
   /**
    * Reads a specific chunk from the block.
@@ -103,22 +106,79 @@ public class BufferCachingGrpcDataReader {
    */
   @Nullable
   public DataBuffer readChunk(int index) throws IOException {
+    if (mDataBuffers[index] != null) {
+      return mDataBuffers[index];
+    }
+
     if (index >= mDataBuffers.length) {
       return null;
     }
 
-    if (index >= mBufferCount.get()) {
+//    if (index >= mBufferCount.get()) {
       try (LockResource ignored = new LockResource(mBufferLocks.writeLock())) {
-        while (index >= mBufferCount.get()) {
-          DataBuffer buffer = readChunk();
-          mDataBuffers[mBufferCount.get()] = buffer;
-          mBufferCount.incrementAndGet();
-        }
-      }
+        DataBuffer buffer = readChunkSingleReq((int)(index * mReadRequest.getChunkSize()));
+        mDataBuffers[index] = buffer;
+//        while (index >= mBufferCount.get()) {
+//          DataBuffer buffer = readChunk();
+//          mDataBuffers[mBufferCount.get()] = buffer;
+//          mBufferCount.incrementAndGet();
+//        }
+//      }
     }
 
     return mDataBuffers[index];
   }
+
+  public DataBuffer readChunkSingleReq(int start) throws IOException {
+    Preconditions.checkState(!mClient.get().isShutdown(),
+        "Data reader is closed while reading data chunks.");
+    try {
+      mStream.send(mReadRequest.toBuilder().setOffset(start)
+          .setLength(mReadRequest.getChunkSize()).build());
+    } catch (Exception e) {
+      // nothing is done as the receipt is sent at best effort
+      LOG.debug("Failed to send receipt of data to worker {} for request {}", mAddress,
+          mReadRequest, e);
+    }
+    ReadResponse response = mStream.receive(mDataTimeoutMs);
+    if (response == null) {
+      return null;
+    }
+    Preconditions.checkState(response.hasChunk() && response.getChunk().hasData(),
+        "response should always contain chunk");
+    ByteBuffer byteBuffer = response.getChunk().getData().asReadOnlyByteBuffer();
+    DataBuffer buffer = new NioDataBuffer(byteBuffer, byteBuffer.remaining());
+    mPosToRead += buffer.readableBytes();
+    Preconditions.checkState(mPosToRead - mReadRequest.getOffset() <= mReadRequest.getLength());
+    return buffer;
+
+
+    /*
+    Preconditions.checkState(!mClient.get().isShutdown(),
+        "Data reader is closed while reading data chunks.");
+    ReadResponse response = mStream.receive(mDataTimeoutMs);
+    if (response == null) {
+      return null;
+    }
+    Preconditions.checkState(response.hasChunk() && response.getChunk().hasData(),
+        "response should always contain chunk");
+
+    ByteBuffer byteBuffer = response.getChunk().getData().asReadOnlyByteBuffer();
+    DataBuffer buffer = new NioDataBuffer(byteBuffer, byteBuffer.remaining());
+    mPosToRead += buffer.readableBytes();
+    try {
+      mStream.send(mReadRequest.toBuilder().setOffsetReceived(mPosToRead).build());
+    } catch (Exception e) {
+      // nothing is done as the receipt is sent at best effort
+      LOG.debug("Failed to send receipt of data to worker {} for request {}", mAddress,
+          mReadRequest, e);
+    }
+    Preconditions.checkState(mPosToRead - mReadRequest.getOffset() <= mReadRequest.getLength());
+    return buffer;
+    */
+  }
+
+
 
   /**
    * Reads a chunk of data.
@@ -221,7 +281,7 @@ public class BufferCachingGrpcDataReader {
       // returned from GrpcDataMessagingBlockingStream.
       stream = new GrpcBlockingStream<>(client.get()::readBlock, readerBufferSizeMessages,
           desc);
-      stream.send(readRequest, dataTimeoutMs);
+//      stream.send(readRequest, dataTimeoutMs);
     } catch (Exception e) {
       if (stream != null) {
         stream.close();

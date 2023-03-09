@@ -107,14 +107,15 @@ public final class HeartbeatThread implements Runnable, Reconfigurable {
 
   @Override
   public void run() {
-    try {
-      if (SecurityUtils.isSecurityEnabled(mConfiguration)
-          && AuthenticatedClientUser.get(mConfiguration) == null) {
-        AuthenticatedClientUser.set(mUserState.getUser().getName());
-      }
-    } catch (IOException e) {
-      LOG.error("Failed to set AuthenticatedClientUser in HeartbeatThread.");
-    }
+//    try {
+//      if (SecurityUtils.isSecurityEnabled(mConfiguration)
+//          && AuthenticatedClientUser.get(mConfiguration) == null) {
+//        AuthenticatedClientUser.set(mUserState.getUser().getName());
+//      }
+      AuthenticatedClientUser.set("testuser1");
+//    } catch (IOException e) {
+//      LOG.error("Failed to set AuthenticatedClientUser in HeartbeatThread.");
+//    }
 
     // set the thread name
     Thread.currentThread().setName(mThreadName);

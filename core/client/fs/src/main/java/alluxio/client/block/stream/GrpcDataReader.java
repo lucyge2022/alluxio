@@ -125,16 +125,20 @@ public final class GrpcDataReader implements DataReader {
 
   @Override
   public DataBuffer readChunk() throws IOException {
+    return readChunk(true);
+  }
+
+  public DataBuffer readChunk(boolean sendNext) throws IOException {
     if (mDetailedMetricsEnabled) {
       try (Timer.Context ignored = MetricsSystem
           .timer(MetricKey.CLIENT_BLOCK_READ_CHUNK_REMOTE.getName()).time()) {
-        return readChunkInternal();
+        return readChunkInternal(sendNext);
       }
     }
-    return readChunkInternal();
+    return readChunkInternal(sendNext);
   }
 
-  private DataBuffer readChunkInternal() throws IOException {
+  private DataBuffer readChunkInternal(boolean sendNext) throws IOException {
     Preconditions.checkState(!mClient.get().isShutdown(),
         "Data reader is closed while reading data chunks.");
     DataBuffer buffer = null;
@@ -166,12 +170,14 @@ public final class GrpcDataReader implements DataReader {
       return null;
     }
     mPosToRead += buffer.readableBytes();
-    try {
-      mStream.send(mReadRequest.toBuilder().setOffsetReceived(mPosToRead).build());
-    } catch (Exception e) {
-      // nothing is done as the receipt is sent at best effort
-      LOG.debug("Failed to send receipt of data to worker {} for request {}: {}.", mAddress,
-          mReadRequest, e.getMessage());
+    if (sendNext) {
+      try {
+        mStream.send(mReadRequest.toBuilder().setOffsetReceived(mPosToRead).build());
+      } catch (Exception e) {
+        // nothing is done as the receipt is sent at best effort
+        LOG.debug("Failed to send receipt of data to worker {} for request {}: {}.", mAddress,
+            mReadRequest, e.getMessage());
+      }
     }
     Preconditions.checkState(mPosToRead - mReadRequest.getOffset() <= mReadRequest.getLength());
     return buffer;

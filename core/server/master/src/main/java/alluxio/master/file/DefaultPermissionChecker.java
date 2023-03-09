@@ -210,7 +210,7 @@ public class DefaultPermissionChecker implements PermissionChecker {
     Preconditions.checkArgument(size > 0,
         PreconditionMessage.EMPTY_FILE_INFO_LIST_FOR_PERMISSION_CHECK);
 
-    // bypass checking permission for super user or super group of Alluxio file system.
+    // bypass checking permission for superuser or super group of Alluxio file system.
     if (isPrivilegedUser(user, groups)) {
       return;
     }

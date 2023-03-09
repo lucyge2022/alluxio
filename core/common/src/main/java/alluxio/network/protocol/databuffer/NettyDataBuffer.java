@@ -81,4 +81,9 @@ public final class NettyDataBuffer implements DataBuffer {
   public void release() {
     mNettyBuf.release();
   }
+
+  @Override
+  public void seek(int pos) {
+    mNettyBuf.readerIndex(pos);
+  }
 }

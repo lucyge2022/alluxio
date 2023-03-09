@@ -116,6 +116,7 @@ public class BlockInStream extends InputStream implements BoundedStream, Seekabl
 
     AlluxioConfiguration alluxioConf = context.getClusterConf();
     boolean shortCircuit = alluxioConf.getBoolean(PropertyKey.USER_SHORT_CIRCUIT_ENABLED);
+    shortCircuit = false;
     boolean shortCircuitPreferred =
         alluxioConf.getBoolean(PropertyKey.USER_SHORT_CIRCUIT_PREFERRED);
     boolean sourceSupportsDomainSocket = NettyUtils.isDomainSocketSupported(dataSource);
@@ -410,7 +411,8 @@ public class BlockInStream extends InputStream implements BoundedStream, Seekabl
   }
 
   private void seekForSharedGrpcDataReader(long pos) throws IOException {
-    if (pos < mPos) {
+//    if (pos < mPos) {
+    if (1 > 0) {
       mEOF = false;
       // because the reader is shared, let's not close it but simply seek
       ((SharedGrpcDataReader) mDataReader).seek(pos);

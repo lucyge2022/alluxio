@@ -72,4 +72,9 @@ public class ReadableDataBuffer implements DataBuffer {
   public void release() {
     mBuffer.close();
   }
+
+  @Override
+  public void seek(int pos) {
+    mBuffer.skipBytes(pos);
+  }
 }

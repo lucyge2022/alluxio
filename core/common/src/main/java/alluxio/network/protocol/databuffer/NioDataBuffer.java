@@ -90,4 +90,9 @@ public class NioDataBuffer implements DataBuffer {
       BufferUtils.cleanDirectBuffer(mBuffer);
     }
   }
+
+  @Override
+  public void seek(int pos) {
+    mBuffer.position(pos);
+  }
 }
