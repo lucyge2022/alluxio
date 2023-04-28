@@ -15,38 +15,7 @@ import alluxio.conf.AlluxioConfiguration;
 import alluxio.conf.PropertyKey;
 import alluxio.exception.status.AlluxioStatusException;
 import alluxio.exception.status.UnauthenticatedException;
-import alluxio.grpc.BlockWorkerGrpc;
-import alluxio.grpc.CacheRequest;
-import alluxio.grpc.ClearMetricsRequest;
-import alluxio.grpc.ClearMetricsResponse;
-import alluxio.grpc.CopyRequest;
-import alluxio.grpc.CopyResponse;
-import alluxio.grpc.CreateLocalBlockRequest;
-import alluxio.grpc.CreateLocalBlockResponse;
-import alluxio.grpc.DataMessageMarshaller;
-import alluxio.grpc.DataMessageMarshallerProvider;
-import alluxio.grpc.FreeWorkerRequest;
-import alluxio.grpc.GetStatusPRequest;
-import alluxio.grpc.GetStatusPResponse;
-import alluxio.grpc.GrpcChannel;
-import alluxio.grpc.GrpcChannelBuilder;
-import alluxio.grpc.GrpcNetworkGroup;
-import alluxio.grpc.GrpcSerializationUtils;
-import alluxio.grpc.GrpcServerAddress;
-import alluxio.grpc.ListStatusPRequest;
-import alluxio.grpc.ListStatusPResponse;
-import alluxio.grpc.LoadRequest;
-import alluxio.grpc.LoadResponse;
-import alluxio.grpc.MoveBlockRequest;
-import alluxio.grpc.MoveBlockResponse;
-import alluxio.grpc.OpenLocalBlockRequest;
-import alluxio.grpc.OpenLocalBlockResponse;
-import alluxio.grpc.ReadRequest;
-import alluxio.grpc.ReadResponse;
-import alluxio.grpc.RemoveBlockRequest;
-import alluxio.grpc.RemoveBlockResponse;
-import alluxio.grpc.WriteRequest;
-import alluxio.grpc.WriteResponse;
+import alluxio.grpc.*;
 import alluxio.resource.AlluxioResourceLeakDetectorFactory;
 import alluxio.resource.LockResource;
 import alluxio.retry.RetryPolicy;
@@ -318,6 +287,11 @@ public class DefaultBlockWorkerClient implements BlockWorkerClient {
   @Override
   public ListenableFuture<LoadResponse> load(LoadRequest request) {
     return mRpcFutureStub.load(request);
+  }
+
+  @Override
+  public ListenableFuture<LoadFileResponse> loadFile(LoadFileRequest request) {
+    return mRpcFutureStub.loadFile(request);
   }
 
   @Override
