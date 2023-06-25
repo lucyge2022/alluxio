@@ -17,17 +17,26 @@ import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
 import alluxio.exception.AlluxioException;
 
+import alluxio.network.protocol.databuffer.PooledDirectNioByteBuf;
+import alluxio.util.io.AlluxioBuffer;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Supplier;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.RemovalListener;
+import com.google.common.cache.RemovalNotification;
+import io.netty.buffer.ByteBuf;
 import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -48,6 +57,7 @@ public class MemoryCacheFileInStream extends FileInStream {
   private static final int PAGE_SIZE;
 
   private static final Cache<CacheKey, byte[]> CACHE;
+  private static final Cache<CacheKey, AlluxioBuffer> BUF_CACHE;
 
   static {
     long pageSize = Configuration.getBytes(PropertyKey.FUSE_MEMORY_CACHE_PAGE_SIZE);
@@ -76,7 +86,24 @@ public class MemoryCacheFileInStream extends FileInStream {
         .concurrencyLevel(concurrencyLevel)
         .expireAfterWrite(expireMs, TimeUnit.MILLISECONDS)
         .build();
+    BUF_CACHE = CacheBuilder.newBuilder()
+        .maximumSize(pageCount)
+        .concurrencyLevel(concurrencyLevel)
+        .expireAfterWrite(expireMs, TimeUnit.MILLISECONDS)
+        .removalListener(new RemovalListener<CacheKey, AlluxioBuffer>() {
+          @Override
+          public void onRemoval(RemovalNotification<CacheKey, AlluxioBuffer> notification) {
+            LOG.info("onRemoval for buffer, len:{}, back_capacity:{}",
+                notification.getValue().length(), notification.getValue().capacity());
+            try (AlluxioBuffer ab = notification.getValue()) {
+              // NOOP just close it, if at same time it was consuming for reads by other threads
+              // they will close it and whoever is the last to close will return the buffer to BufferPool
+            } catch (IOException e) {}
+          }
+        })
+        .build();
   }
+
 
   private final URIStatus mStatus;
   private final FileInStream mFileInStream;
@@ -202,17 +229,46 @@ public class MemoryCacheFileInStream extends FileInStream {
       if (mStatus.getLength() <= mPos) {
         return -1;
       }
-      byte[] src = CACHE.get(
-          new CacheKey(mStatus.getPath(), mStatus.getLastModificationTimeMs(), posKey),
-          () -> {
-            mFileInStream.seek(posKey);
-            byte[] data = new byte[(int) Math.min(PAGE_SIZE, mStatus.getLength() - posKey)];
-            IOUtils.readFully(mFileInStream, data);
-            return data;
-          });
-      int read = Math.min(src.length - start, length);
-      read = Math.min(read, dest.length - offset);
-      System.arraycopy(src, start, dest, offset, read);
+//      byte[] src = CACHE.get(
+//          new CacheKey(mStatus.getPath(), mStatus.getLastModificationTimeMs(), posKey),
+//          () -> {
+//            mFileInStream.seek(posKey);
+//            byte[] data = new byte[(int) Math.min(PAGE_SIZE, mStatus.getLength() - posKey)];
+//            IOUtils.readFully(mFileInStream, data);
+//            return data;
+//          });
+//      int read = Math.min(src.length - start, length);
+//      read = Math.min(read, dest.length - offset);
+//      System.arraycopy(src, start, dest, offset, read);
+
+      int read = 0;
+      while (true) {
+        AlluxioBuffer aBuf = BUF_CACHE.get(
+            new CacheKey(mStatus.getPath(), mStatus.getLastModificationTimeMs(), posKey),
+            () -> {
+              mFileInStream.seek(posKey);
+              int cacheDataLen = (int) Math.min(PAGE_SIZE, mStatus.getLength() - posKey);
+              AlluxioBuffer buf = AlluxioBuffer.allocate(cacheDataLen, true);
+              LOG.info("load alluxiobuf for key:{}, len:{}, back_size:{}",
+                  mStatus.getPath() + ":" + Long.toString(posKey),
+                  buf.length(), buf.capacity());
+              buf.setWriteIndex(0);
+              buf.fillMe(mFileInStream, cacheDataLen);
+              // no one is going to call close here, so just return
+              return buf;
+            });
+        // if retainDuplicate return null, this means this AlluxioBuffer is already
+        // evicted and got close, grab a new one from map
+        try (AlluxioBuffer dupReadOnlyBuf = aBuf.retainDuplicate()) {
+          if (dupReadOnlyBuf != null) {
+            read = Math.min(aBuf.length() - start, length);
+            read = Math.min(read, dest.length - offset);
+            aBuf.setReadIndex(start);
+            aBuf.get(dest, offset, read);
+            break;
+          }
+        }
+      }
       return read;
     } catch (Exception e) {
       throw new IOException(e);
