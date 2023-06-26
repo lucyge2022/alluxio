@@ -85,6 +85,7 @@ public class BufferPool {
     public void returnBuffer(ByteBuf buffer) {
         Preconditions.checkState(buffer.refCnt() == 1,
             "buffer not from pool but refcnt non-zero, leaking situation.");
+        buffer.clear();
         boolean isDirect = buffer.isDirect();
         int idx = Arrays.binarySearch(bufSize_, buffer.capacity());
         boolean fromPool = idx >= 0 && idx < bufSize_.length;

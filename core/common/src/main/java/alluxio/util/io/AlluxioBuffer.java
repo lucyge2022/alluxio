@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntBinaryOperator;
 
 public class AlluxioBuffer implements Closeable {
-  private AtomicReference<ByteBuf> mBuffer;
+  private AtomicReference<ByteBuf> mBuffer = new AtomicReference<>();
   private AtomicBoolean mClosed = new AtomicBoolean(false);
   private int mLength;
   private AtomicInteger mRefCnt = new AtomicInteger(0);
@@ -139,10 +139,9 @@ public class AlluxioBuffer implements Closeable {
       throw new IOException("Write not allowed for child AlluxioBuffer.");
     }
     int written = 0;
-    while (in.available() > 0 && writableBytes() > 0) {
+    while (writableBytes() > 0) {
       // otherwise bytebuf will automaticall expand capacity, can't let that happen
-      int fillLen = Math.min(writableBytes(), in.available());
-      written += mBuffer.get().writeBytes(in, fillLen);
+      written += mBuffer.get().writeBytes(in, Math.min(writableBytes(), length));
     }
     return written;
   }
@@ -161,5 +160,3 @@ public class AlluxioBuffer implements Closeable {
     }
   }
 }
-
-
