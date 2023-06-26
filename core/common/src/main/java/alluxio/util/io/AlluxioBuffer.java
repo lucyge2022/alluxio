@@ -43,10 +43,16 @@ public class AlluxioBuffer implements Closeable {
   }
 
   public int length() {
+    if (mParentBuffer.isPresent()) {
+      return mParentBuffer.get().length();
+    }
     return mLength;
   }
 
   public int capacity() {
+    if (mParentBuffer.isPresent()) {
+      return mParentBuffer.get().capacity();
+    }
     return mBuffer.get().capacity();
   }
 
@@ -131,19 +137,26 @@ public class AlluxioBuffer implements Closeable {
    * fill me for a maximum of @param length from given input stream.
    * @param in
    * @param length
-   * @return actual written length
+   * @return actual length transferred from InputStream to this buffer
    * @throws IOException
    */
   public int fillMe(InputStream in, int length) throws IOException {
     if (mParentBuffer.isPresent()) {
       throw new IOException("Write not allowed for child AlluxioBuffer.");
     }
-    int written = 0;
-    while (writableBytes() > 0) {
-      // otherwise bytebuf will automaticall expand capacity, can't let that happen
-      written += mBuffer.get().writeBytes(in, Math.min(writableBytes(), length));
+    if (length < 0) {
+      throw new IllegalArgumentException("Length must not be negative: " + length);
     }
-    return written;
+    int remaining = length;
+    while (remaining > 0) {
+      // writeBytes will automatically expand if not enough space, we can't let that happen.
+      final int readCount = mBuffer.get().writeBytes(in, Math.min(writableBytes(), remaining));
+      if (readCount == -1) { // EOF
+        break;
+      }
+      remaining -= readCount;
+    }
+    return length - remaining;
   }
 
   public static class RefCountOperator implements IntBinaryOperator {

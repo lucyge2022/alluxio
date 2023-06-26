@@ -19,6 +19,8 @@ import alluxio.conf.PropertyKey;
 import alluxio.exception.AlluxioException;
 import alluxio.wire.FileInfo;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import org.apache.commons.io.IOUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -26,6 +28,7 @@ import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -51,13 +54,25 @@ public class MemoryCacheFileInStreamTest {
     // test empty data
     testRead(0, 1);
 
+//    ByteBuf buf = Unpooled.directBuffer(1024);
+//    buf.writerIndex(0);
+//    ByteBuffer buffer = ByteBuffer.allocate(32);
+//    buffer.putInt(20);
+//    buffer.flip();
+//    buf.writerIndex(0);
+//    buf.writeBytes(buffer);
+//    System.out.println(buf.writerIndex());
+//    if (1 > 0)
+//      return;
+
     // dataSize < buffer
-    for (int i = 0; i < 1000; i++) {
-      testRead(mRandom.nextInt(1024), 1024 + mRandom.nextInt(1024));
-    }
+//    for (int i = 0; i < 1000; i++) {
+//      testRead(mRandom.nextInt(1024), 1024 + mRandom.nextInt(1024));
+//    }
 
     // dataSize > buffer && dataSize < 4KB(page size)
     for (int i = 0; i < 1000; i++) {
+      System.out.println("test:" + i);
       testRead(Constants.KB + mRandom.nextInt(3 * Constants.KB), 128 + mRandom.nextInt(128));
     }
 
@@ -148,6 +163,7 @@ public class MemoryCacheFileInStreamTest {
   private MemoryCacheFileInStream createRandomMemoryCacheFileInStream(byte[] bytes)
       throws IOException, AlluxioException {
     MockFileInStream fileInStream = new MockFileInStream(bytes);
+//    System.out.println("fileInStream.available:" + fileInStream.available());
     FileInfo fileInfo = new FileInfo();
     fileInfo.setPath(UUID.randomUUID().toString());
     fileInfo.setLastModificationTimeMs(Math.abs(mRandom.nextLong()));

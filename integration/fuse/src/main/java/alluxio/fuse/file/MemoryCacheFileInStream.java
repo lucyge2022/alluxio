@@ -261,10 +261,10 @@ public class MemoryCacheFileInStream extends FileInStream {
         // evicted and got close, grab a new one from map
         try (AlluxioBuffer dupReadOnlyBuf = aBuf.retainDuplicate()) {
           if (dupReadOnlyBuf != null) {
-            read = Math.min(aBuf.length() - start, length);
+            read = Math.min(dupReadOnlyBuf.length() - start, length);
             read = Math.min(read, dest.length - offset);
-            aBuf.setReadIndex(start);
-            aBuf.get(dest, offset, read);
+            dupReadOnlyBuf.setReadIndex(start);
+            dupReadOnlyBuf.get(dest, offset, read);
             break;
           }
         }
