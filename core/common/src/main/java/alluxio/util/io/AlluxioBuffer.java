@@ -85,10 +85,7 @@ public class AlluxioBuffer implements Closeable {
    * @param length length of bytes to transfer into
    */
   public void get(byte[] dst, int offset, int length) {
-    while (readableBytes() > 0) {
-      int toRead = Math.min(readableBytes(), length);
-      mBuffer.get().readBytes(dst, offset, toRead);
-    }
+    mBuffer.get().readBytes(dst, offset, Math.min(readableBytes(), length));
   }
 
   public boolean isClosed() {
