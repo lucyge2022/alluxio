@@ -135,16 +135,15 @@
       <groupId>org.rocksdb</groupId>
       <artifactId>rocksdbjni</artifactId>
     </dependency>
+    <dependency>
+      <groupId>io.etcd</groupId>
+      <artifactId>jetcd-core</artifactId>
+    </dependency>
     <!-- Determine version with the table here: https://github.com/grpc/grpc-java/blob/master/SECURITY.md-->
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-tcnative-boringssl-static</artifactId>
       <version>2.0.56.Final</version>
-    </dependency>
-    <dependency>
-      <groupId>io.etcd</groupId>
-      <artifactId>jetcd-core</artifactId>
-      <version>0.7.5</version>
     </dependency>
 
     <!-- Internal dependencies -->

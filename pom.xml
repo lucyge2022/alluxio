@@ -352,6 +352,11 @@
         <version>${metrics.version}</version>
       </dependency>
       <dependency>
+        <groupId>io.etcd</groupId>
+        <artifactId>jetcd-core</artifactId>
+        <version>0.7.5</version>
+      </dependency>
+      <dependency>
         <groupId>io.grpc</groupId>
         <artifactId>grpc-api</artifactId>
         <version>${grpc.version}</version>
