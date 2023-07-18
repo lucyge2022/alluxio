@@ -153,8 +153,9 @@ public class PagedDoraWorker extends AbstractWorker implements DoraWorker {
   public PagedDoraWorker(
       @Named("workerId") AtomicReference<Long> workerId,
       AlluxioConfiguration conf,
-      CacheManager cacheManager) {
-    this(workerId, conf, cacheManager, new BlockMasterClientPool());
+      CacheManager cacheManager,
+      MembershipManager membershipManager) {
+    this(workerId, conf, cacheManager, new BlockMasterClientPool(), membershipManager);
   }
 
   protected PagedDoraWorker(
