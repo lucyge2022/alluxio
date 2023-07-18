@@ -13,10 +13,6 @@
 set -ex
 
 function main {
-  if [ -z "${ALLUXIO_DOCKER_ID}" ]
-  then
-    ALLUXIO_DOCKER_ID="$(id -u)"
-  fi
   if [ -z "${ALLUXIO_DOCKER_M2}" ]
   then
     ALLUXIO_DOCKER_M2="${HOME}/.m2"
@@ -65,10 +61,6 @@ function main {
   run_args+=" --cap-add SYS_ADMIN"
   run_args+=" --device /dev/fuse"
   run_args+=" --security-opt apparmor:unconfined"
-
-  # Run as the host jenkins user so that files written to .m2 are written as jenkins.
-  # Use group 0 to get certain elevated permissions.
-  run_args+=" --user ${ALLUXIO_DOCKER_ID}:0"
 
   # Mount the local directory inside the docker container, and set it as the working directory
   run_args+=" -v $(pwd):/usr/src/alluxio"
