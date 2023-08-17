@@ -113,6 +113,10 @@
       <artifactId>swagger-annotations</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.vertx</groupId>
+      <artifactId>vertx-core</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.alluxio</groupId>
       <artifactId>alluxio-core-transport</artifactId>
       <version>${project.version}</version>

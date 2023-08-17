@@ -46,6 +46,10 @@
       <artifactId>commons-cli</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.etcd</groupId>
+      <artifactId>jetcd-core</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.alluxio</groupId>
       <artifactId>alluxio-core-client-fs</artifactId>
       <version>${project.version}</version>

@@ -11,6 +11,7 @@
 
 #include <jni.h>
 #include <pthread.h>
+#include "jnifuse_jvm.h"
 
 #include "check.h"
 #include "debug.h"
@@ -84,10 +85,12 @@ jint InitGlobalJniVariables(JavaVM* jvm) {
 JNIEnv* AttachCurrentThreadIfNeeded() {
     JNIEnv* jni = (JNIEnv*) pthread_getspecific(g_jni_ptr);
     if (jni) {
+      LucyFunc(jni);
       return jni;
     }
     jni = GetEnv();
     if (jni) {
+      LucyFunc(jni);
       JNIFUSE_CHECK_CODE(pthread_setspecific(g_jni_ptr, jni), "Failed to associate JNI env to thread");
       return jni;
     }
@@ -98,6 +101,18 @@ JNIEnv* AttachCurrentThreadIfNeeded() {
     jni = reinterpret_cast<JNIEnv*>(env);
     JNIFUSE_CHECK_CODE(pthread_setspecific(g_jni_ptr, jni), "Failed to associate JNI env to thread");
     LOGD("Attach thread to JVM");
+    LucyFunc(jni);
     return jni;
+}
+
+void LucyFunc(JNIEnv* env) {
+    jclass cls = (env)->FindClass("io/vertx/core/dns/AddressResolverOptions.class");
+    if (cls == NULL) {
+        if ((env)->ExceptionOccurred()) {
+            (env)->ExceptionDescribe();
+        }
+        printf("LUCY Failed to get class\n");
+        exit(1);
+    }
 }
 }  // namespace jnifuse

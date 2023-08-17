@@ -26,6 +26,8 @@ JavaVM* GetJVM();
 // Return a |JNIEnv*| usable on this thread.  Attaches to JVM if necessary.
 JNIEnv* AttachCurrentThreadIfNeeded();
 
+void LucyFunc(JNIEnv* env);
 }  // namespace jnifuse
+
 
 #endif  // FUSE_NATIVE_LIBJNIFUSE_JVM_H_

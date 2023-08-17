@@ -13,6 +13,8 @@
 #include "jnifuse_jvm.h"
 #include "operation.h"
 
+#include <iostream>
+#include <ostream>
 namespace jnifuse {
 
 Operation::Operation() {
@@ -438,6 +440,7 @@ int SetxattrOperation::call(const char *path, const char *name, const char *valu
 }
 
 StatfsOperation::StatfsOperation(JniFuseFileSystem *fs) {
+  std::cout << "LUCY!!!" << std::endl;
   this->fs = fs;
   JNIEnv *env = AttachCurrentThreadIfNeeded();
   this->obj = this->fs->getFSObj();

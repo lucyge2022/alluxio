@@ -60,6 +60,10 @@
       <artifactId>metrics-core</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.etcd</groupId>
+      <artifactId>jetcd-core</artifactId>
+    </dependency>
+    <dependency>
       <groupId>io.grpc</groupId>
       <artifactId>grpc-api</artifactId>
     </dependency>
@@ -74,6 +78,10 @@
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-all</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.vertx</groupId>
+      <artifactId>vertx-core</artifactId>
     </dependency>
     <dependency>
       <groupId>org.alluxio</groupId>

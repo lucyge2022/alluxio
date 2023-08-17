@@ -40,7 +40,9 @@ public class LibFuse {
 
     if (libraryLoaded.compareAndSet(LibraryState.NOT_LOADED,
         LibraryState.LOADING)) {
-      String tmpDir = System.getenv("JNIFUSE_SHAREDLIB_DIR");
+//      String tmpDir = System.getenv("JNIFUSE_SHAREDLIB_DIR");
+      String tmpDir = System.getProperty("lucyDir");
+      System.out.println("LUCYDEBUG:tmpdir:" + tmpDir);
       try {
         NativeLibraryLoader.getInstance().loadLibrary(version, tmpDir);
       } catch (IOException e) {
