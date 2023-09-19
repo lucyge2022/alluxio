@@ -89,6 +89,10 @@
       <groupId>org.rocksdb</groupId>
       <artifactId>rocksdbjni</artifactId>
     </dependency>
+    <dependency>
+      <groupId>com.jucx</groupId>
+      <artifactId>jucx</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>org.alluxio</groupId>

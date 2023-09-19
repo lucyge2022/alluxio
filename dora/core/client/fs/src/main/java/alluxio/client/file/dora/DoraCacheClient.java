@@ -26,6 +26,7 @@ import alluxio.client.file.PositionReadFileInStream;
 import alluxio.client.file.URIStatus;
 import alluxio.client.file.dora.netty.NettyDataReader;
 import alluxio.client.file.dora.netty.NettyDataWriter;
+import alluxio.client.file.dora.ucx.UcxDataReader;
 import alluxio.client.file.options.OutStreamOptions;
 import alluxio.collections.Pair;
 import alluxio.conf.PropertyKey;
@@ -60,8 +61,14 @@ import alluxio.grpc.SetAttributePRequest;
 import alluxio.proto.dataserver.Protocol;
 import alluxio.resource.CloseableResource;
 import alluxio.wire.WorkerNetAddress;
+import alluxio.worker.ucx.UcpProxy;
+
+import org.openucx.jucx.ucp.UcpContext;
+import org.openucx.jucx.ucp.UcpParams;
+import org.openucx.jucx.ucp.UcpWorker;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -160,6 +167,19 @@ public class DoraCacheClient {
     // Construct the partial read request
     NettyDataReader reader = createNettyDataReader(workerNetAddress, ufsOptions);
     return new DoraCachePositionReader(reader, status.getLength(), externalPositionReader);
+  }
+
+  public UcxDataReader createUcxPositionReader(URIStatus status,
+                                               Protocol.OpenUfsBlockOptions ufsOptions) {
+    WorkerNetAddress workerNetAddress = getWorkerNetAddress(status.toString());
+    InetSocketAddress inetSocketAddress =
+        new InetSocketAddress(workerNetAddress.getHost(), 1234);
+    Protocol.ReadRequest.Builder builder = Protocol.ReadRequest.newBuilder()
+        .setBlockId(DUMMY_BLOCK_ID)
+        .setOpenUfsBlockOptions(ufsOptions)
+        .setChunkSize(mChunkSize);
+    return new UcxDataReader(inetSocketAddress, UcpProxy.getInstance().mWorker,
+        builder);
   }
 
   protected GrpcDataReader.Factory createGrpcDataReader(

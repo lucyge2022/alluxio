@@ -12,6 +12,7 @@
 package alluxio.client.file.cache.store;
 
 import static alluxio.client.file.cache.store.PageStoreDir.getFileBucket;
+import static java.nio.file.StandardOpenOption.READ;
 
 import alluxio.client.file.cache.PageId;
 import alluxio.client.file.cache.PageStore;
@@ -23,6 +24,11 @@ import alluxio.network.protocol.databuffer.DataFileChannel;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import org.apache.commons.io.FileUtils;
+import org.openucx.jucx.UcxUtils;
+import org.openucx.jucx.ucp.UcpContext;
+import org.openucx.jucx.ucp.UcpMemMapParams;
+import org.openucx.jucx.ucp.UcpMemory;
+import org.openucx.jucx.ucp.UcpParams;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -30,6 +36,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -198,6 +206,23 @@ public class LocalPageStore implements PageStore {
         isTemporary ? getTempFilePath(pageId.getFileId()) : getFilePath(pageId.getFileId());
     return filePath.resolve(Long.toString(pageId.getPageIndex()));
   }
+
+  public static final UcpContext sGlobalContext = new UcpContext(new UcpParams()
+        .requestStreamFeature()
+        .requestTagFeature()
+        .requestWakeupFeature());
+  public UcpMemory get(PageId pageId, boolean isTemporary,
+                       int pageOffset, int bytesToRead) throws IOException {
+    Path filePath = getPagePath(pageId, isTemporary);
+    FileChannel fileChannel = FileChannel.open(filePath, READ);
+    MappedByteBuffer buf = fileChannel.map(FileChannel.MapMode.READ_ONLY,
+        pageOffset, bytesToRead);
+    UcpMemory mmapedMemory = sGlobalContext.memoryMap(new UcpMemMapParams()
+        .setAddress(UcxUtils.getAddress(buf))
+        .setLength(bytesToRead).nonBlocking());
+    return mmapedMemory;
+  }
+
 
   @Override
   public DataFileChannel getDataFileChannel(
