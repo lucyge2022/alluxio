@@ -197,7 +197,7 @@
         <artifactId>jucx</artifactId>
         <version>1.0</version>
         <scope>system</scope>
-        <systemPath>/Users/lucyge/Documents/github/alluxio/jucx-0910.jar</systemPath>
+        <systemPath>${build.path}/lib/jucx-0910.jar</systemPath>
       </dependency>
       <dependency>
         <groupId>software.amazon.awssdk</groupId>
