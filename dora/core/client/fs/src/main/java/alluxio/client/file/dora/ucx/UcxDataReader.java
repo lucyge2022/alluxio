@@ -28,6 +28,7 @@ public class UcxDataReader implements PositionReader {
   private static final Logger LOG = LoggerFactory.getLogger(UcxDataReader.class);
 
   InetSocketAddress mAddr;
+  // make this a global, one per process only instance
   UcpWorker mWorker;
   UcpEndpoint mWorkerEndpoint;
   Supplier<Protocol.ReadRequest.Builder> mRequestBuilder;
@@ -52,10 +53,14 @@ public class UcxDataReader implements PositionReader {
             .setSocketAddress(mAddr));
   }
 
+  synchronized public int progressWorker() throws Exception {
+    return mWorker.progress();
+  }
+
   public void waitForRequest(UcpRequest ucpRequest) {
     while(!ucpRequest.isCompleted()) {
       try {
-        mWorker.progress();
+        progressWorker();
       } catch (Exception e) {
         LOG.error("Error progressing req:", e);
       }
@@ -73,7 +78,7 @@ public class UcxDataReader implements PositionReader {
     ByteBuffer buf = ByteBuffer.allocateDirect(serializedBytes.length);
     buf.put(serializedBytes);
     buf.rewind();
-    UcpRequest sendRequest = mWorkerEndpoint.sendTaggedNonBlocking(buf, serializedBytes.length, new UcxCallback() {
+    UcpRequest sendRequest = mWorkerEndpoint.sendTaggedNonBlocking(buf, new UcxCallback() {
       public void onSuccess(UcpRequest request) {
         LOG.info("ReadReq:{} sent.", readRequest);
       }

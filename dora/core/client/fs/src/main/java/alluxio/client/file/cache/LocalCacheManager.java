@@ -653,6 +653,24 @@ public class LocalCacheManager implements CacheManager {
     }
   }
 
+  public int cache(PageId pageId, CacheContext cacheContext, Supplier<byte[]> externalDataSupplier) {
+    int bytesCached = 0;
+    long startTime = System.nanoTime();
+    byte[] page = externalDataSupplier.get();
+    long timeElapse = System.nanoTime() - startTime;
+    MetricsSystem.meter(MetricKey.CLIENT_CACHE_BYTES_REQUESTED_EXTERNAL.getName())
+        .mark(bytesCached);
+    MetricsSystem.counter(MetricKey.CLIENT_CACHE_EXTERNAL_REQUESTS.getName()).inc();
+    cacheContext.incrementCounter(
+        MetricKey.CLIENT_CACHE_BYTES_REQUESTED_EXTERNAL.getMetricName(), BYTE,
+        bytesCached);
+    cacheContext.incrementCounter(
+        MetricKey.CLIENT_CACHE_PAGE_READ_EXTERNAL_TIME_NS.getMetricName(), NANO,
+        timeElapse);
+    put(pageId, page, cacheContext);
+    return bytesCached;
+  }
+
   @Override
   public int getAndLoad(PageId pageId, int pageOffset, int bytesToRead, ReadTargetBuffer buffer,
                         CacheContext cacheContext, Supplier<byte[]> externalDataSupplier) {

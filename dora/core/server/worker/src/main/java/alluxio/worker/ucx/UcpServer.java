@@ -15,6 +15,7 @@ import alluxio.wire.WorkerNetAddress;
 import alluxio.worker.netty.ReadRequest;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import io.netty.channel.SingleThreadEventLoop;
 import org.openucx.jucx.UcxCallback;
 import org.openucx.jucx.UcxException;
 import org.openucx.jucx.ucp.UcpConnectionRequest;
@@ -52,6 +53,7 @@ import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -82,6 +84,8 @@ public class UcpServer {
       0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(4),
       ThreadFactoryUtils.build("worker-threads-%d", true));
 
+  private ExecutorService mAcceptorExecutor =  Executors.newFixedThreadPool(1);
+
   public UcpServer() {
     mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams());
     List<InetAddress> addressesToBind = getAllAddresses();
@@ -99,6 +103,7 @@ public class UcpServer {
           new InetSocketAddress(addr, BIND_PORT)));
       LOG.info("Bound UcpListener on address:{}", ucpListener.getAddress());
     }
+    mAcceptorExecutor.submit(new AcceptorThread());
   }
 
   public static class PeerInfo {

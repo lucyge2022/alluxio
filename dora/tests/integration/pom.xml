@@ -32,6 +32,10 @@
 
   <dependencies>
     <dependency>
+      <groupId>org.openucx</groupId>
+      <artifactId>jucx</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.beust</groupId>
       <artifactId>jcommander</artifactId>
     </dependency>

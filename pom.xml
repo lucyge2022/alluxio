@@ -193,11 +193,9 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
-        <groupId>com.jucx</groupId>
+        <groupId>org.openucx</groupId>
         <artifactId>jucx</artifactId>
-        <version>1.0</version>
-        <scope>system</scope>
-        <systemPath>/Users/lucyge/Documents/github/alluxio/build/lib/jucx-0910.jar</systemPath>
+        <version>1.15.0</version>
       </dependency>
       <dependency>
         <groupId>software.amazon.awssdk</groupId>
