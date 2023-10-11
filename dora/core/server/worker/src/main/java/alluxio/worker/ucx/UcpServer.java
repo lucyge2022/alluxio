@@ -1,8 +1,11 @@
 package alluxio.worker.ucx;
 
 import alluxio.AlluxioURI;
+import alluxio.client.file.cache.CacheManagerOptions;
 import alluxio.client.file.cache.LocalCacheManager;
 import alluxio.client.file.cache.PageId;
+import alluxio.client.file.cache.PageMetaStore;
+import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
 import alluxio.exception.PageNotFoundException;
 import alluxio.proto.dataserver.Protocol;
@@ -86,7 +89,12 @@ public class UcpServer {
 
   private ExecutorService mAcceptorExecutor =  Executors.newFixedThreadPool(1);
 
-  public UcpServer() {
+  public UcpServer() throws IOException {
+    CacheManagerOptions cacheManagerOptions =
+        CacheManagerOptions.createForWorker(Configuration.global());
+    mlocalCacheManager = LocalCacheManager.create(
+        cacheManagerOptions, PageMetaStore.create(
+            CacheManagerOptions.createForWorker(Configuration.global())));
     mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams());
     List<InetAddress> addressesToBind = getAllAddresses();
     UcpListenerParams listenerParams = new UcpListenerParams()
@@ -105,6 +113,22 @@ public class UcpServer {
     }
     mAcceptorExecutor.submit(new AcceptorThread());
   }
+
+  public void awaitTermination() {
+    mAcceptorExecutor.shutdown();
+  }
+
+  public static void main(String[] args) {
+    try {
+      LOG.info("Starting ucp server...");
+      UcpServer ucpServer = new UcpServer();
+      LOG.info("Awaiting termination...");
+      ucpServer.awaitTermination();
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
 
   public static class PeerInfo {
     InetSocketAddress mRemoteAddr;
