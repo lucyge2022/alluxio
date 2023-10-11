@@ -6,21 +6,15 @@ import alluxio.client.file.cache.LocalCacheManager;
 import alluxio.client.file.cache.PageId;
 import alluxio.client.file.cache.PageMetaStore;
 import alluxio.conf.Configuration;
-import alluxio.conf.PropertyKey;
 import alluxio.exception.PageNotFoundException;
 import alluxio.proto.dataserver.Protocol;
-import alluxio.table.ProtoUtils;
+import alluxio.ucx.UcpUtils;
 import alluxio.util.ThreadFactoryUtils;
 
 import alluxio.util.io.BufferPool;
-import alluxio.wire.WorkerInfo;
-import alluxio.wire.WorkerNetAddress;
-import alluxio.worker.netty.ReadRequest;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import io.netty.channel.SingleThreadEventLoop;
 import org.openucx.jucx.UcxCallback;
-import org.openucx.jucx.UcxException;
 import org.openucx.jucx.ucp.UcpConnectionRequest;
 import org.openucx.jucx.ucp.UcpContext;
 import org.openucx.jucx.ucp.UcpEndpoint;
@@ -38,12 +32,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.io.Serializable;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
@@ -58,10 +49,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -262,26 +251,27 @@ public class UcpServer {
   // accept one single rpc req at a time
   class AcceptorThread implements Runnable {
 
-    public UcpRequest recvRequest() {
+    public UcpRequest recvRequest(PeerInfo peerInfo) {
       ByteBuffer recvBuffer = BufferPool.getInstance().getABuffer(PAGE_SIZE, true)
           .nioBuffer();
+      long tag = UcpUtils.generateTag(peerInfo.mRemoteAddr);
+      // currently only matching the ip, excluding port as ucx 1.15.0 doesn't expose ucpendpoint.getloaladdress
+      // when client establish remote conn
+      long tagMask = 0xFFFFFFFF0000L;
       UcpRequest recvRequest = mGlobalWorker.recvTaggedNonBlocking(
-          recvBuffer, new UcxCallback() {
+          recvBuffer, tag, tagMask, new UcxCallback() {
             public void onSuccess(UcpRequest request) {
-              LOG.info("New req received!");
-              PeerInfo peerInfo;
-              try {
-                peerInfo = PeerInfo.parsePeerInfo(recvBuffer);
-              } catch (IOException e) {
-                LOG.error("parse peerinfo errored out:", e);
-                throw new RuntimeException(e);
-              }
+              LOG.info("New req received from peer:{}", peerInfo);
               tpe.execute(new RPCMessageHandler(peerInfo, recvBuffer));
+              LOG.info("onSuccess start receiving another req for peer:{}", peerInfo);
+              recvRequest(peerInfo);
             }
 
             public void onError(int ucsStatus, String errorMsg) {
               LOG.error("Receive req errored, status:{}, errMsg:{}",
                   ucsStatus, errorMsg);
+              LOG.info("onError start receiving another req for peer:{}", peerInfo);
+              recvRequest(peerInfo);
             }
           });
       return recvRequest;
@@ -291,28 +281,29 @@ public class UcpServer {
       UcpConnectionRequest connectionReq = mConnectionRequests.poll();
       if (connectionReq != null) {
         PeerInfo peerInfo = new PeerInfo(
-            connectionReq.getClientAddress(),  connectionReq.getClientId());
+            connectionReq.getClientAddress(), connectionReq.getClientId());
         UcpEndpoint existingEndpoint = mPeerEndpoints.computeIfAbsent(peerInfo, pInfo -> {
           return mGlobalWorker.newEndpoint(new UcpEndpointParams()
               .setPeerErrorHandlingMode()
               .setConnectionRequest(connectionReq));
         });
-        if (existingEndpoint != null) {
-          LOG.warn("Existing endpoint found from same peer:" + peerInfo.toString());
-        }
+        recvRequest(peerInfo);
+//        if (existingEndpoint != null) {
+//          LOG.warn("Existing endpoint found from same peer:" + peerInfo.toString());
+//        }
       }
     }
 
     @Override
     public void run() {
       try {
-        UcpRequest recvReq = recvRequest();
+//        UcpRequest recvReq = recvRequest();
         while (true) {
           acceptNewConn();
-          if (recvReq.isCompleted()) {
-            // Process 1 recv request at a time.
-            recvReq = recvRequest();
-          }
+//          if (recvReq.isCompleted()) {
+//            // Process 1 recv request at a time.
+//            recvReq = recvRequest();
+//          }
           try {
             if (mGlobalWorker.progress() == 0) {
               mGlobalWorker.waitForEvents();

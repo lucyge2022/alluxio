@@ -4,6 +4,7 @@ import alluxio.PositionReader;
 import alluxio.file.ByteBufferTargetBuffer;
 import alluxio.file.ReadTargetBuffer;
 import alluxio.proto.dataserver.Protocol;
+import alluxio.ucx.UcpUtils;
 import alluxio.wire.WorkerNetAddress;
 import alluxio.worker.ucx.UcpProxy;
 
@@ -20,34 +21,45 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.function.Supplier;
 
 public class UcxDataReader implements PositionReader {
   private static final Logger LOG = LoggerFactory.getLogger(UcxDataReader.class);
+  public static final int PAGE_SIZE = 4096;
 
   InetSocketAddress mAddr;
+  private static InetSocketAddress sLocalAddr = null;
   // make this a global, one per process only instance
   UcpWorker mWorker;
   UcpEndpoint mWorkerEndpoint;
   Supplier<Protocol.ReadRequest.Builder> mRequestBuilder;
   public UcxDataReader(InetSocketAddress addr, UcpWorker worker,
                        Protocol.ReadRequest.Builder requestBuilder) {
+    try {
+      sLocalAddr = new InetSocketAddress(InetAddress.getLocalHost(),0);
+    } catch (UnknownHostException e) {
+      throw new RuntimeException(e);
+    }
     mAddr = addr;
     mWorker = worker;
     mRequestBuilder = requestBuilder::clone;
+
   }
 
   public void acquireServerConn() {
     if (mWorkerEndpoint != null) {
       return;
     }
+    LOG.info("Acquiring server connection for {}", mAddr);
     mWorkerEndpoint = mWorker.newEndpoint(
         new UcpEndpointParams()
             .setPeerErrorHandlingMode()
             .setErrorHandler((ep, status, errorMsg) ->
-                System.out.println("[ERROR] creating ep to remote:"
+                LOG.error("[ERROR] creating ep to remote:"
                     + mAddr + " errored out: " + errorMsg
                     + " status:" + status + ",ep:" + ep.toString()))
             .setSocketAddress(mAddr));
@@ -75,10 +87,11 @@ public class UcxDataReader implements PositionReader {
         .clearCancel();
     Protocol.ReadRequest readRequest = builder.build();
     byte[] serializedBytes = readRequest.toByteArray();
-    ByteBuffer buf = ByteBuffer.allocateDirect(serializedBytes.length);
+    ByteBuffer buf = ByteBuffer.allocateDirect(PAGE_SIZE);
     buf.put(serializedBytes);
     buf.rewind();
-    UcpRequest sendRequest = mWorkerEndpoint.sendTaggedNonBlocking(buf, new UcxCallback() {
+    long tag = UcpUtils.generateTag(sLocalAddr);
+    UcpRequest sendRequest = mWorkerEndpoint.sendTaggedNonBlocking(buf, tag, new UcxCallback() {
       public void onSuccess(UcpRequest request) {
         LOG.info("ReadReq:{} sent.", readRequest);
       }

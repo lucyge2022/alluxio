@@ -38,6 +38,8 @@ public class UcpClientTest {
   public Random mRandom = new Random();
   public LocalCacheManager mLocalCacheManager;
   public UcpWorker mWorker;
+  public String mHost;
+  public int mPort;
 
   class SampleData {
     String mMd5;
@@ -54,13 +56,15 @@ public class UcpClientTest {
     }
   }
 
-  public UcpClientTest() throws IOException {
+  public UcpClientTest(String host, int port) throws IOException {
     CacheManagerOptions cacheManagerOptions =
         CacheManagerOptions.createForWorker(Configuration.global());
     mLocalCacheManager = LocalCacheManager.create(
         cacheManagerOptions, PageMetaStore.create(
             CacheManagerOptions.createForWorker(Configuration.global())));
     mWorker = sGlobalContext.newWorker(new UcpWorkerParams());
+    mHost = host;
+    mPort = port;
   }
 
   public byte[] generateRandomData(int size) {
@@ -83,8 +87,7 @@ public class UcpClientTest {
       PageId pageId = new PageId(new AlluxioURI(dummyUfsPath).hash(), i);
       mLocalCacheManager.cache(pageId, CacheContext.defaults(), externalDataSupplier);
     }
-    InetSocketAddress serverAddr = new InetSocketAddress("localhost", 1234);
-
+    InetSocketAddress serverAddr = new InetSocketAddress(mHost, mPort);
     Protocol.OpenUfsBlockOptions openUfsBlockOptions =
         Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(dummyUfsPath)
             .setOffsetInFile(0).setBlockSize(totalLen)
@@ -92,13 +95,13 @@ public class UcpClientTest {
             .setNoCache(true)
             .setMountId(0)
             .build();
-
+    Protocol.ReadRequest.Builder requestBuilder = Protocol.ReadRequest.newBuilder()
+        .setOpenUfsBlockOptions(openUfsBlockOptions);
+    UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, requestBuilder);
+    reader.acquireServerConn();
     for (int i=0; i<totalPages; i++) {
       long position = i * pageSize;
       int length = pageSize;
-      Protocol.ReadRequest.Builder requestBuilder = Protocol.ReadRequest.newBuilder()
-          .setOpenUfsBlockOptions(openUfsBlockOptions);
-      UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, requestBuilder);
       ByteBuffer buffer = ByteBuffer.allocateDirect(length);
       try {
         reader.read(position, buffer, length);
@@ -116,8 +119,18 @@ public class UcpClientTest {
 
   public static void main(String[] args) {
     try {
+      String host = "127.0.0.1";
+      int port = 1234;
+      if (args.length >= 2) {
+        host = args[0];
+        try {
+          port = Integer.parseInt(args[1]);
+        } catch (NumberFormatException ex) {
+          throw new IllegalArgumentException("Usage .. host port[int]");
+        }
+      }
       LOG.info("Instantiating UcpClientTest...");
-      UcpClientTest ucpClientTest = new UcpClientTest();
+      UcpClientTest ucpClientTest = new UcpClientTest(host, port);
       LOG.info("Start testClientServer...");
       ucpClientTest.testClientServer();
     } catch (IOException e) {
