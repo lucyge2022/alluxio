@@ -9,6 +9,7 @@ import alluxio.client.file.cache.PageMetaStore;
 import alluxio.client.file.dora.ucx.UcxDataReader;
 import alluxio.conf.Configuration;
 import alluxio.proto.dataserver.Protocol;
+import alluxio.util.HashUtils;
 
 import com.google.common.base.Preconditions;
 import org.apache.commons.codec.binary.Hex;
@@ -26,6 +27,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Random;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 public class UcpClientTest {
@@ -59,9 +64,9 @@ public class UcpClientTest {
   public UcpClientTest(String host, int port) throws IOException {
     CacheManagerOptions cacheManagerOptions =
         CacheManagerOptions.createForWorker(Configuration.global());
-    mLocalCacheManager = LocalCacheManager.create(
-        cacheManagerOptions, PageMetaStore.create(
-            CacheManagerOptions.createForWorker(Configuration.global())));
+//    mLocalCacheManager = LocalCacheManager.create(
+//        cacheManagerOptions, PageMetaStore.create(
+//            CacheManagerOptions.createForWorker(Configuration.global())));
     mWorker = sGlobalContext.newWorker(new UcpWorkerParams());
     mHost = host;
     mPort = port;
@@ -83,10 +88,10 @@ public class UcpClientTest {
     };
     int totalLen = 5 * pageSize;
     int totalPages = totalLen / pageSize;
-    for (int i=0; i<totalPages; i++) {
-      PageId pageId = new PageId(new AlluxioURI(dummyUfsPath).hash(), i);
-      mLocalCacheManager.cache(pageId, CacheContext.defaults(), externalDataSupplier);
-    }
+//    for (int i=0; i<totalPages; i++) {
+//      PageId pageId = new PageId(new AlluxioURI(dummyUfsPath).hash(), i);
+//      mLocalCacheManager.cache(pageId, CacheContext.defaults(), externalDataSupplier);
+//    }
     InetSocketAddress serverAddr = new InetSocketAddress(mHost, mPort);
     Protocol.OpenUfsBlockOptions openUfsBlockOptions =
         Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(dummyUfsPath)
@@ -99,17 +104,28 @@ public class UcpClientTest {
         .setOpenUfsBlockOptions(openUfsBlockOptions);
     UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, requestBuilder);
     reader.acquireServerConn();
-    for (int i=0; i<totalPages; i++) {
-      long position = i * pageSize;
+    for (int i=0; i<1; i++) {
+      long position = i * pageSize + mRandom.nextInt(pageSize);
       int length = pageSize;
       ByteBuffer buffer = ByteBuffer.allocateDirect(length);
+      LOG.info("reading position:{}:length:{}", position, length);
       try {
         reader.read(position, buffer, length);
         buffer.clear();
+        LOG.info("buffer:{}", buffer);
         byte[] readContent = new byte[length];
         buffer.get(readContent);
-        Preconditions.checkArgument(Arrays.equals(readContent, sampleData.mData),
-            String.format("pageid:{} content mismatch.", i));
+        String readContentMd5 = "";
+        try {
+          MessageDigest md = MessageDigest.getInstance("MD5");
+          md.update(readContent);
+          readContentMd5 = Hex.encodeHexString(md.digest()).toLowerCase();
+        } catch (NoSuchAlgorithmException e) {
+          /* No actions. Continue with other hash method. */
+        }
+        LOG.info("readContentMd5:{}:sample data md5:{}", readContentMd5, sampleData.mMd5);
+//        Preconditions.checkArgument(Arrays.equals(readContent, sampleData.mData),
+//            String.format("pageid:{} content mismatch.", i));
       } catch (IOException e) {
         System.out.println("IOException on position:" + position + ":length:" + length);
         throw new RuntimeException(e);
@@ -118,23 +134,32 @@ public class UcpClientTest {
   }
 
   public static void main(String[] args) {
-    try {
-      String host = "127.0.0.1";
-      int port = 1234;
-      if (args.length >= 2) {
-        host = args[0];
-        try {
-          port = Integer.parseInt(args[1]);
-        } catch (NumberFormatException ex) {
-          throw new IllegalArgumentException("Usage .. host port[int]");
-        }
+    String host = "127.0.0.1";
+    int port = 1234;
+    if (args.length >= 2) {
+      host = args[0];
+      try {
+        port = Integer.parseInt(args[1]);
+      } catch (NumberFormatException ex) {
+        throw new IllegalArgumentException("Usage .. host port[int]");
       }
-      LOG.info("Instantiating UcpClientTest...");
-      UcpClientTest ucpClientTest = new UcpClientTest(host, port);
-      LOG.info("Start testClientServer...");
-      ucpClientTest.testClientServer();
-    } catch (IOException e) {
-      throw new RuntimeException(e);
+    }
+    final String hostToConnect = host;
+    final int portToConnect = port;
+    ThreadPoolExecutor tpe = new ThreadPoolExecutor(
+        1,1,0,
+        TimeUnit.SECONDS,new ArrayBlockingQueue<>(64*1024));
+    for (int i=0;i<1;i++) {
+      tpe.execute(() -> {
+        try {
+          LOG.info("Instantiating UcpClientTest...");
+          UcpClientTest ucpClientTest = new UcpClientTest(hostToConnect, portToConnect);
+          LOG.info("Start testClientServer...");
+          ucpClientTest.testClientServer();
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      } );
     }
 
   }

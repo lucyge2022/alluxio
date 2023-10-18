@@ -215,6 +215,8 @@ public class LocalPageStore implements PageStore {
                        int pageOffset, int bytesToRead) throws IOException {
     Path filePath = getPagePath(pageId, isTemporary);
     FileChannel fileChannel = FileChannel.open(filePath, READ);
+    LOG.error("open fc for:{}:pageOffset:{}:bytesToRead:{}",
+        filePath, pageOffset, bytesToRead);
     MappedByteBuffer buf = fileChannel.map(FileChannel.MapMode.READ_ONLY,
         pageOffset, bytesToRead);
     UcpMemory mmapedMemory = sGlobalContext.memoryMap(new UcpMemMapParams()

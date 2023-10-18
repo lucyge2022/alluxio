@@ -12,6 +12,7 @@ import com.google.common.base.Preconditions;
 import org.openucx.jucx.UcxCallback;
 import org.openucx.jucx.UcxException;
 import org.openucx.jucx.UcxUtils;
+import org.openucx.jucx.ucp.UcpConstants;
 import org.openucx.jucx.ucp.UcpEndpoint;
 import org.openucx.jucx.ucp.UcpEndpointParams;
 import org.openucx.jucx.ucp.UcpMemory;
@@ -25,6 +26,9 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.Supplier;
 
 public class UcxDataReader implements PositionReader {
@@ -88,8 +92,9 @@ public class UcxDataReader implements PositionReader {
     Protocol.ReadRequest readRequest = builder.build();
     byte[] serializedBytes = readRequest.toByteArray();
     ByteBuffer buf = ByteBuffer.allocateDirect(PAGE_SIZE);
+    buf.putInt(serializedBytes.length);
     buf.put(serializedBytes);
-    buf.rewind();
+    buf.clear();
     long tag = UcpUtils.generateTag(sLocalAddr);
     UcpRequest sendRequest = mWorkerEndpoint.sendTaggedNonBlocking(buf, tag, new UcxCallback() {
       public void onSuccess(UcpRequest request) {
@@ -100,14 +105,73 @@ public class UcxDataReader implements PositionReader {
         throw new UcxException(errorMsg);
       }
     });
+    LOG.info("Waiting for read request to send...");
     waitForRequest(sendRequest);
     // now wait to recv data
-    Preconditions.checkArgument((buffer instanceof ByteBufferTargetBuffer
-            && buffer.byteBuffer().isDirect()),
-        "Must be ByteBufferTargetBuffer with direct ByteBuffer");
-    UcpRequest recvRequest = mWorker.recvTaggedNonBlocking(
-        UcxUtils.getAddress(buffer.byteBuffer()), length, 0,0, null);
-    waitForRequest(recvRequest);
+    Preconditions.checkArgument(buffer.byteBuffer().isDirect(), "ByteBuffer must be direct buffer");
+    int bytesRead = 0;
+    ByteBuffer preamble = ByteBuffer.allocateDirect(16);
+    TreeMap<Long, ByteBuffer> buffers = new TreeMap<>();
+    preamble.clear();
+    LinkedList<UcpRequest> dataUcpRecvReqs = new LinkedList<>();
+    while (bytesRead < length) {
+      UcpRequest recvReq = mWorkerEndpoint.recvStreamNonBlocking(UcxUtils.getAddress(preamble), 16,
+          UcpConstants.UCP_STREAM_RECV_FLAG_WAITALL, new UcxCallback() {
+            public void onSuccess(UcpRequest request) {}
+
+            public void onError(int ucsStatus, String errorMsg) {
+              throw new UcxException(errorMsg);
+            }
+          });
+      LOG.info("Waiting for preamble...");
+      waitForRequest(recvReq);
+      preamble.clear();
+      long seq = preamble.getLong();
+      long size = preamble.getLong();
+      preamble.clear();
+      ByteBuffer seqBuffer = ByteBuffer.allocateDirect(8);
+      ByteBuffer dataBuffer = ByteBuffer.allocateDirect((int)size);
+      long[] addrs = new long[2];
+      long[] sizes = new long[2];
+      addrs[0] = UcxUtils.getAddress(seqBuffer);
+      addrs[1] = UcxUtils.getAddress(dataBuffer);
+      sizes[0] = 8;
+      sizes[1] = size;
+      LOG.info("preamble info:seq:{}:len:{}", seq, size);
+      UcpRequest dataRecvReq = mWorkerEndpoint.recvStreamNonBlocking(addrs, sizes,
+          UcpConstants.UCP_STREAM_RECV_FLAG_WAITALL, new UcxCallback() {
+            public void onSuccess(UcpRequest request) {
+              ByteBuffer seqBufView = UcxUtils.getByteBufferView(addrs[0], sizes[0]);
+              seqBufView.clear();
+              long sequence = seqBufView.getLong();
+              ByteBuffer dataBufView = UcxUtils.getByteBufferView(addrs[1], sizes[1]);
+              dataBufView.clear();
+              LOG.info("Received buffers, seq:{}, data buf size:{}", sequence, sizes[1]);
+              buffers.put(sequence, dataBufView);
+            }
+
+            public void onError(int ucsStatus, String errorMsg) {
+              LOG.error("Error receiving buffers, seq:{}, data buf size:{}, errorMsg:{}",
+                  seq, size, errorMsg);
+              throw new UcxException(errorMsg);
+            }
+          });
+      LOG.info("Offering actual data recReq to q...");
+      dataUcpRecvReqs.offer(dataRecvReq);
+//      waitForRequest(recvReq);
+      bytesRead += size;
+    }
+    while(!dataUcpRecvReqs.isEmpty()) {
+      UcpRequest nextReq = dataUcpRecvReqs.poll();
+      waitForRequest(nextReq);
+    }
+    buffer.byteBuffer().clear();
+    while (!buffers.isEmpty()) {
+      Map.Entry<Long, ByteBuffer> entry = buffers.pollFirstEntry();
+      LOG.info("Copying seq:{},bufsize:{}", entry.getKey(), entry.getValue());
+      entry.getValue().clear();
+      buffer.byteBuffer().put(entry.getValue());
+    }
     return 0;
   }
 }

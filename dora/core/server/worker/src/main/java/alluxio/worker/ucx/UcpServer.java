@@ -15,6 +15,7 @@ import alluxio.util.io.BufferPool;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import org.openucx.jucx.UcxCallback;
+import org.openucx.jucx.UcxUtils;
 import org.openucx.jucx.ucp.UcpConnectionRequest;
 import org.openucx.jucx.ucp.UcpContext;
 import org.openucx.jucx.ucp.UcpEndpoint;
@@ -40,6 +41,7 @@ import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +53,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -61,8 +65,11 @@ public class UcpServer {
   private LocalCacheManager mlocalCacheManager;
   private UcpWorker mGlobalWorker;
   private Map<PeerInfo, UcpEndpoint> mPeerEndpoints = new ConcurrentHashMap<>();
+  private Map<PeerInfo, AtomicLong> mPeerToSequencers = new ConcurrentHashMap<>();
   // TODO(lucy) backlogging if too many incoming req...
   private LinkedBlockingQueue<UcpConnectionRequest> mConnectionRequests
+      = new LinkedBlockingQueue<>();
+  private LinkedBlockingQueue<UcpRequest> mReceiveRequests
       = new LinkedBlockingQueue<>();
   private static final UcpContext sGlobalContext = new UcpContext(new UcpParams()
         .requestStreamFeature()
@@ -184,6 +191,8 @@ public class UcpServer {
 
   public static Protocol.ReadRequest parseReadRequest(ByteBuffer buf)
       throws InvalidProtocolBufferException {
+    LOG.info("buf:capacity:{}:position:{}:limit:{}",
+        buf.capacity(), buf.position(), buf.limit());
     int contentLen = buf.getInt();
     buf.limit(buf.position() + contentLen);
     Protocol.ReadRequest request = Protocol.ReadRequest.parseFrom(buf);
@@ -194,49 +203,91 @@ public class UcpServer {
     private static final long WORKER_PAGE_SIZE = 1*1024*1024L;
     Protocol.ReadRequest readRequest = null;
     UcpEndpoint remoteEp;
+    AtomicLong sequencer;
         //conf.getBytes(PropertyKey.WORKER_PAGE_STORE_PAGE_SIZE);
 
     @Override
     public void run() {
       final String fileId =
           new AlluxioURI(readRequest.getOpenUfsBlockOptions().getUfsPath()).hash();
-      int pageIndex = (int)(readRequest.getOffset() / WORKER_PAGE_SIZE);
-      int pageOffset = (int)(readRequest.getOffset() % WORKER_PAGE_SIZE);
+      long offset = readRequest.getOffset();
       long totalLength = readRequest.getLength();
-      PageId pageId = new PageId(fileId, pageIndex);
+      List<UcpRequest> requests = new ArrayList<>();
       for (int bytesRead = 0; bytesRead < totalLength; ) {
-        int readLen = (int)Math.min(totalLength - bytesRead, WORKER_PAGE_SIZE);
+        int pageIndex = (int)(offset / WORKER_PAGE_SIZE);
+        int pageOffset = (int)(offset % WORKER_PAGE_SIZE);
+        int readLen = (int)Math.min(totalLength - bytesRead, WORKER_PAGE_SIZE - pageOffset);
+        PageId pageId = new PageId(fileId, pageIndex);
         try {
           Optional<UcpMemory> readContentUcpMem =
               mlocalCacheManager.get(pageId, pageOffset, readLen);
           if (!readContentUcpMem.isPresent()) {
             break;
           }
-          UcpRequest sendReq = remoteEp.sendStreamNonBlocking(
-              readContentUcpMem.get().getAddress(),
-              readContentUcpMem.get().getLength(), new UcxCallback() {
+          offset += readLen;
+          bytesRead += readLen;
+          // first 8 bytes -> sequence  second 8 bytes -> size
+          ByteBuffer preamble = ByteBuffer.allocateDirect(16);
+          preamble.clear();
+          long seq = sequencer.incrementAndGet();
+          preamble.putLong(seq);
+          preamble.putLong(readContentUcpMem.get().getLength());
+          preamble.clear();
+          UcpRequest preambleReq = remoteEp.sendStreamNonBlocking(UcxUtils.getAddress(preamble),
+              16, new UcxCallback() {
                 public void onSuccess(UcpRequest request) {
-                  LOG.info("send complete for pageid:{}:pageoffset:{}:readLen:{}",
-                      pageId, pageOffset, readLen);
+                  LOG.info("preamble sent, sequence:{}, len:{}"
+                      ,seq, readContentUcpMem.get().getLength());
                 }
 
                 public void onError(int ucsStatus, String errorMsg) {
-                  LOG.error("error sending:pageid:{}:pageoffset:{}:readLen:{}",
-                      pageId, pageOffset, readLen);
+                  LOG.error("error sending preamble:pageoffset:{}:readLen:{}",
+                      pageOffset, readLen);
                 }
               });
+          requests.add(preambleReq);
+
+          long[] addrs = new long[2];
+          long[] sizes = new long[2];
+          ByteBuffer seqBuf = ByteBuffer.allocateDirect(8);
+          seqBuf.putLong(seq); seqBuf.clear();
+          addrs[0] = UcxUtils.getAddress(seqBuf); sizes[0] = 8;
+          addrs[1] = readContentUcpMem.get().getAddress(); sizes[1] = readContentUcpMem.get().getLength();
+          UcpRequest sendReq = remoteEp.sendStreamNonBlocking(
+              addrs, sizes, new UcxCallback() {
+                public void onSuccess(UcpRequest request) {
+                  LOG.info("send complete for pageoffset:{}:readLen:{}",
+                      pageOffset, readLen);
+                  readContentUcpMem.get().deregister();
+                }
+
+                public void onError(int ucsStatus, String errorMsg) {
+                  LOG.error("error sending :pageoffset:{}:readLen:{}",
+                      pageOffset, readLen);
+                  readContentUcpMem.get().deregister();
+                }
+              });
+          requests.add(sendReq);
         } catch (PageNotFoundException | IOException e) {
           throw new RuntimeException(e);
         }
-        LOG.info("Handle read req:{} complete", readRequest);
+      }// end for
+      LOG.info("Handle read req:{} complete", readRequest);
+      while (requests.stream().anyMatch(r -> !r.isCompleted())) {
+        LOG.info("Wait for all {} ucpreq to complete, sleep for 5 sec...");
+        try {
+          Thread.sleep(5000);
+        } catch (InterruptedException e) {
+          throw new RuntimeException(e);
+        }
       }
     }
-
 
     public RPCMessageHandler(PeerInfo peerInfo, ByteBuffer recvBuffer) {
       // deserialize rpc mesg
       readRequest = null;
       remoteEp = mPeerEndpoints.get(peerInfo);
+      sequencer = mPeerToSequencers.computeIfAbsent(peerInfo, pi -> new AtomicLong(0L));
       if (remoteEp == null) {
         throw new RuntimeException("unrecognized peerinfo:" + peerInfo.toString());
       }
@@ -252,8 +303,15 @@ public class UcpServer {
   class AcceptorThread implements Runnable {
 
     public UcpRequest recvRequest(PeerInfo peerInfo) {
-      ByteBuffer recvBuffer = BufferPool.getInstance().getABuffer(PAGE_SIZE, true)
-          .nioBuffer();
+      if (peerInfo == null) {
+        return null;
+      }
+//      ByteBuffer recvBuffer = BufferPool.getInstance().getABuffer(PAGE_SIZE, true)
+//          .nioBuffer();
+      ByteBuffer recvBuffer = ByteBuffer.allocateDirect(PAGE_SIZE);
+      LOG.info("recvBuffer capacity:{}:limit:{}:position:{}",
+          recvBuffer.capacity(), recvBuffer.limit(), recvBuffer.position());
+      recvBuffer.clear();
       long tag = UcpUtils.generateTag(peerInfo.mRemoteAddr);
       // currently only matching the ip, excluding port as ucx 1.15.0 doesn't expose ucpendpoint.getloaladdress
       // when client establish remote conn
@@ -282,39 +340,43 @@ public class UcpServer {
       if (connectionReq != null) {
         PeerInfo peerInfo = new PeerInfo(
             connectionReq.getClientAddress(), connectionReq.getClientId());
-        UcpEndpoint existingEndpoint = mPeerEndpoints.computeIfAbsent(peerInfo, pInfo -> {
-          return mGlobalWorker.newEndpoint(new UcpEndpointParams()
-              .setPeerErrorHandlingMode()
-              .setConnectionRequest(connectionReq));
+        final AtomicReference<Boolean> newConn = new AtomicReference<>(false);
+        mPeerEndpoints.compute(peerInfo, (pInfo, ep) -> {
+          if (ep == null) {
+            newConn.compareAndSet(false, true);
+            return mGlobalWorker.newEndpoint(new UcpEndpointParams()
+                .setPeerErrorHandlingMode()
+                .setConnectionRequest(connectionReq));
+          } else {
+            LOG.info("Endpoint for peer:{} already exist, rejecting connection req...", peerInfo);
+            connectionReq.reject();
+            return ep;
+          }
         });
-        recvRequest(peerInfo);
-//        if (existingEndpoint != null) {
-//          LOG.warn("Existing endpoint found from same peer:" + peerInfo.toString());
-//        }
+        if (newConn.get()) {
+          UcpRequest req = recvRequest(peerInfo);
+//          mReceiveRequests.offer(req);
+        }
       }
     }
 
     @Override
     public void run() {
-      try {
-//        UcpRequest recvReq = recvRequest();
-        while (true) {
+      while (true) {
+        try {
           acceptNewConn();
-//          if (recvReq.isCompleted()) {
-//            // Process 1 recv request at a time.
-//            recvReq = recvRequest();
-//          }
-          try {
-            if (mGlobalWorker.progress() == 0) {
+          while (mGlobalWorker.progress() == 0) {
+            LOG.info("nothing to progress. wait for events..");
+            try {
               mGlobalWorker.waitForEvents();
+            } catch (Exception e) {
+              LOG.error(e.getLocalizedMessage());
             }
-          } catch (Exception e) {
-            LOG.error(e.getLocalizedMessage());
           }
+        } catch (Exception e) {
+          // not sure what exception would be thrown here.
+          LOG.info("Exception in AcceptorThread", e);
         }
-      } catch (Exception e) {
-        // not sure what exception would be thrown here.
-        LOG.info("Exception in AcceptorThread", e);
       }
     }
   }
