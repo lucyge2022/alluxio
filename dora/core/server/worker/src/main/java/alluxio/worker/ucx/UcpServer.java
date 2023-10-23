@@ -55,28 +55,31 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class UcpServer {
   public static final int PAGE_SIZE = 4096;
-
   private static final Logger LOG = LoggerFactory.getLogger(UcpServer.class);
-  private LocalCacheManager mlocalCacheManager;
+
+  public static UcpServer sInstance = null;
+  public static ReentrantLock sInstanceLock = new ReentrantLock();
+  private static final UcpContext sGlobalContext = new UcpContext(new UcpParams()
+      .requestStreamFeature()
+      .requestTagFeature()
+      .requestWakeupFeature());
+  private int BIND_PORT = 1234;
+
   private UcpWorker mGlobalWorker;
   private Map<PeerInfo, UcpEndpoint> mPeerEndpoints = new ConcurrentHashMap<>();
   private Map<PeerInfo, AtomicLong> mPeerToSequencers = new ConcurrentHashMap<>();
+  public LocalCacheManager mlocalCacheManager;
   // TODO(lucy) backlogging if too many incoming req...
   private LinkedBlockingQueue<UcpConnectionRequest> mConnectionRequests
       = new LinkedBlockingQueue<>();
   private LinkedBlockingQueue<UcpRequest> mReceiveRequests
       = new LinkedBlockingQueue<>();
-  private static final UcpContext sGlobalContext = new UcpContext(new UcpParams()
-        .requestStreamFeature()
-        .requestTagFeature()
-        .requestWakeupFeature());
-  private int BIND_PORT = 1234;
-
   private AcceptorThread mAcceptorLoopThread;
 
   private ThreadPoolExecutor tpe = new ThreadPoolExecutor(4, 4,
@@ -84,6 +87,24 @@ public class UcpServer {
       ThreadFactoryUtils.build("worker-threads-%d", true));
 
   private ExecutorService mAcceptorExecutor =  Executors.newFixedThreadPool(1);
+
+  public static UcpServer getInstance() {
+    if (sInstance != null)
+      return sInstance;
+    sInstanceLock.lock();
+    try {
+      if (sInstance != null)
+        return sInstance;
+      try {
+        sInstance = new UcpServer();
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
+      return sInstance;
+    } finally {
+      sInstanceLock.unlock();
+    }
+  }
 
   public UcpServer() throws IOException {
     CacheManagerOptions cacheManagerOptions =
@@ -199,106 +220,6 @@ public class UcpServer {
     return request;
   }
 
-  class RPCMessageHandler implements Runnable {
-    private static final long WORKER_PAGE_SIZE = 1*1024*1024L;
-    Protocol.ReadRequest readRequest = null;
-    UcpEndpoint remoteEp;
-    AtomicLong sequencer;
-        //conf.getBytes(PropertyKey.WORKER_PAGE_STORE_PAGE_SIZE);
-
-    @Override
-    public void run() {
-      final String fileId =
-          new AlluxioURI(readRequest.getOpenUfsBlockOptions().getUfsPath()).hash();
-      long offset = readRequest.getOffset();
-      long totalLength = readRequest.getLength();
-      List<UcpRequest> requests = new ArrayList<>();
-      for (int bytesRead = 0; bytesRead < totalLength; ) {
-        int pageIndex = (int)(offset / WORKER_PAGE_SIZE);
-        int pageOffset = (int)(offset % WORKER_PAGE_SIZE);
-        int readLen = (int)Math.min(totalLength - bytesRead, WORKER_PAGE_SIZE - pageOffset);
-        PageId pageId = new PageId(fileId, pageIndex);
-        try {
-          Optional<UcpMemory> readContentUcpMem =
-              mlocalCacheManager.get(pageId, pageOffset, readLen);
-          if (!readContentUcpMem.isPresent()) {
-            break;
-          }
-          offset += readLen;
-          bytesRead += readLen;
-          // first 8 bytes -> sequence  second 8 bytes -> size
-          ByteBuffer preamble = ByteBuffer.allocateDirect(16);
-          preamble.clear();
-          long seq = sequencer.incrementAndGet();
-          preamble.putLong(seq);
-          preamble.putLong(readContentUcpMem.get().getLength());
-          preamble.clear();
-          UcpRequest preambleReq = remoteEp.sendStreamNonBlocking(UcxUtils.getAddress(preamble),
-              16, new UcxCallback() {
-                public void onSuccess(UcpRequest request) {
-                  LOG.info("preamble sent, sequence:{}, len:{}"
-                      ,seq, readContentUcpMem.get().getLength());
-                }
-
-                public void onError(int ucsStatus, String errorMsg) {
-                  LOG.error("error sending preamble:pageoffset:{}:readLen:{}",
-                      pageOffset, readLen);
-                }
-              });
-          requests.add(preambleReq);
-
-          long[] addrs = new long[2];
-          long[] sizes = new long[2];
-          ByteBuffer seqBuf = ByteBuffer.allocateDirect(8);
-          seqBuf.putLong(seq); seqBuf.clear();
-          addrs[0] = UcxUtils.getAddress(seqBuf); sizes[0] = 8;
-          addrs[1] = readContentUcpMem.get().getAddress(); sizes[1] = readContentUcpMem.get().getLength();
-          UcpRequest sendReq = remoteEp.sendStreamNonBlocking(
-              addrs, sizes, new UcxCallback() {
-                public void onSuccess(UcpRequest request) {
-                  LOG.info("send complete for pageoffset:{}:readLen:{}",
-                      pageOffset, readLen);
-                  readContentUcpMem.get().deregister();
-                }
-
-                public void onError(int ucsStatus, String errorMsg) {
-                  LOG.error("error sending :pageoffset:{}:readLen:{}",
-                      pageOffset, readLen);
-                  readContentUcpMem.get().deregister();
-                }
-              });
-          requests.add(sendReq);
-        } catch (PageNotFoundException | IOException e) {
-          throw new RuntimeException(e);
-        }
-      }// end for
-      LOG.info("Handle read req:{} complete", readRequest);
-      while (requests.stream().anyMatch(r -> !r.isCompleted())) {
-        LOG.info("Wait for all {} ucpreq to complete, sleep for 5 sec...");
-        try {
-          Thread.sleep(5000);
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-
-    public RPCMessageHandler(PeerInfo peerInfo, ByteBuffer recvBuffer) {
-      // deserialize rpc mesg
-      readRequest = null;
-      remoteEp = mPeerEndpoints.get(peerInfo);
-      sequencer = mPeerToSequencers.computeIfAbsent(peerInfo, pi -> new AtomicLong(0L));
-      if (remoteEp == null) {
-        throw new RuntimeException("unrecognized peerinfo:" + peerInfo.toString());
-      }
-      try {
-        readRequest = parseReadRequest(recvBuffer);
-      } catch (InvalidProtocolBufferException e) {
-        throw new RuntimeException(e);
-      }
-    }
-  }
-
   // accept one single rpc req at a time
   class AcceptorThread implements Runnable {
 
@@ -345,6 +266,13 @@ public class UcpServer {
           if (ep == null) {
             newConn.compareAndSet(false, true);
             return mGlobalWorker.newEndpoint(new UcpEndpointParams()
+                .setErrorHandler((errHandleEp, status, errorMsg) -> {
+                  UcpEndpoint connectedEp = mPeerEndpoints.remove(peerInfo);
+                  if (connectedEp != null) {
+                    LOG.info("Closing peer:{} on error:{}", peerInfo, errorMsg);
+                    connectedEp.close();
+                  }
+                    })
                 .setPeerErrorHandlingMode()
                 .setConnectionRequest(connectionReq));
           } else {

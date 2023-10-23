@@ -217,6 +217,7 @@ public class LocalPageStore implements PageStore {
     FileChannel fileChannel = FileChannel.open(filePath, READ);
     LOG.error("open fc for:{}:pageOffset:{}:bytesToRead:{}",
         filePath, pageOffset, bytesToRead);
+    // set mem pool here
     MappedByteBuffer buf = fileChannel.map(FileChannel.MapMode.READ_ONLY,
         pageOffset, bytesToRead);
     UcpMemory mmapedMemory = sGlobalContext.memoryMap(new UcpMemMapParams()
