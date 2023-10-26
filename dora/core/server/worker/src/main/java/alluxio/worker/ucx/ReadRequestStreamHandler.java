@@ -1,7 +1,6 @@
 package alluxio.worker.ucx;
 
 import alluxio.AlluxioURI;
-import alluxio.client.file.cache.LocalCacheManager;
 import alluxio.client.file.cache.PageId;
 import alluxio.exception.PageNotFoundException;
 import alluxio.proto.dataserver.Protocol;
@@ -22,7 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class RPCMessageHandler implements Runnable {
+public class ReadRequestStreamHandler implements UcxRequestHandler {
   private static final Logger LOG = LoggerFactory.getLogger(UcpServer.class);
   private static final long WORKER_PAGE_SIZE = 1*1024*1024L;
   Protocol.ReadRequest mReadRequest = null;
@@ -30,8 +29,28 @@ public class RPCMessageHandler implements Runnable {
   AtomicLong mSequencer;
   //conf.getBytes(PropertyKey.WORKER_PAGE_STORE_PAGE_SIZE);
 
+  public ReadRequestStreamHandler() {
+
+  }
+
+  public ReadRequestStreamHandler(UcpEndpoint remoteEndpoint, AtomicLong sequencer,
+                                  Protocol.ReadRequest request) {
+    mReadRequest = null;
+    mRemoteEp = remoteEndpoint;
+    mSequencer = sequencer;
+//    sequencer = mPeerToSequencers.computeIfAbsent(peerInfo, pi -> new AtomicLong(0L));
+//      mReadRequest = parseReadRequest(recvBuffer);
+//    mReadRequest = request;
+  }
+
   @Override
-  public void run() {
+  public void handle(UcxMessage message, UcpEndpoint remoteEndpoint) {
+    mRemoteEp = remoteEndpoint;
+    try {
+      mReadRequest = Protocol.ReadRequest.parseFrom(message.getRPCMessage());
+    } catch (InvalidProtocolBufferException e) {
+      throw new RuntimeException(e);
+    }
     final String fileId =
         new AlluxioURI(mReadRequest.getOpenUfsBlockOptions().getUfsPath()).hash();
     long offset = mReadRequest.getOffset();
@@ -105,15 +124,5 @@ public class RPCMessageHandler implements Runnable {
         throw new RuntimeException(e);
       }
     }
-  }
-
-  public RPCMessageHandler(UcpEndpoint remoteEndpoint, AtomicLong sequencer,
-                           Protocol.ReadRequest request) {
-    mReadRequest = null;
-    mRemoteEp = remoteEndpoint;
-    mSequencer = sequencer;
-//    sequencer = mPeerToSequencers.computeIfAbsent(peerInfo, pi -> new AtomicLong(0L));
-//      mReadRequest = parseReadRequest(recvBuffer);
-    mReadRequest = request;
   }
 }

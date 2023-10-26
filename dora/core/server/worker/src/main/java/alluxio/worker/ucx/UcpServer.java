@@ -1,21 +1,15 @@
 package alluxio.worker.ucx;
 
-import alluxio.AlluxioURI;
 import alluxio.client.file.cache.CacheManagerOptions;
 import alluxio.client.file.cache.LocalCacheManager;
-import alluxio.client.file.cache.PageId;
 import alluxio.client.file.cache.PageMetaStore;
 import alluxio.conf.Configuration;
-import alluxio.exception.PageNotFoundException;
 import alluxio.proto.dataserver.Protocol;
 import alluxio.ucx.UcpUtils;
 import alluxio.util.ThreadFactoryUtils;
 
-import alluxio.util.io.BufferPool;
-
 import com.google.protobuf.InvalidProtocolBufferException;
 import org.openucx.jucx.UcxCallback;
-import org.openucx.jucx.UcxUtils;
 import org.openucx.jucx.ucp.UcpConnectionRequest;
 import org.openucx.jucx.ucp.UcpContext;
 import org.openucx.jucx.ucp.UcpEndpoint;
@@ -23,7 +17,6 @@ import org.openucx.jucx.ucp.UcpEndpointParams;
 import org.openucx.jucx.ucp.UcpListener;
 import org.openucx.jucx.ucp.UcpListenerConnectionHandler;
 import org.openucx.jucx.ucp.UcpListenerParams;
-import org.openucx.jucx.ucp.UcpMemory;
 import org.openucx.jucx.ucp.UcpParams;
 import org.openucx.jucx.ucp.UcpRequest;
 import org.openucx.jucx.ucp.UcpWorker;
@@ -41,11 +34,9 @@ import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -60,12 +51,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class UcpServer {
-  public static final int PAGE_SIZE = 4096;
   private static final Logger LOG = LoggerFactory.getLogger(UcpServer.class);
 
   public static UcpServer sInstance = null;
   public static ReentrantLock sInstanceLock = new ReentrantLock();
-  private static final UcpContext sGlobalContext = new UcpContext(new UcpParams()
+  public static final UcpContext sGlobalContext = new UcpContext(new UcpParams()
       .requestStreamFeature()
       .requestTagFeature()
       .requestWakeupFeature());
@@ -121,6 +111,7 @@ public class UcpServer {
             LOG.info("Incoming request, clientAddr:{} clientId:{}",
                 connectionRequest.getClientAddress(), connectionRequest.getClientId());
             mConnectionRequests.offer(connectionRequest);
+
           }
         });
     for (InetAddress addr : addressesToBind) {
@@ -129,6 +120,10 @@ public class UcpServer {
       LOG.info("Bound UcpListener on address:{}", ucpListener.getAddress());
     }
     mAcceptorExecutor.submit(new AcceptorThread());
+  }
+
+  public UcpWorker getGlobalWorker() {
+    return mGlobalWorker;
   }
 
   public void awaitTermination() {
@@ -209,51 +204,16 @@ public class UcpServer {
     return addresses;
   }
 
-
-  public static Protocol.ReadRequest parseReadRequest(ByteBuffer buf)
-      throws InvalidProtocolBufferException {
-    LOG.info("buf:capacity:{}:position:{}:limit:{}",
-        buf.capacity(), buf.position(), buf.limit());
-    int contentLen = buf.getInt();
-    buf.limit(buf.position() + contentLen);
-    Protocol.ReadRequest request = Protocol.ReadRequest.parseFrom(buf);
-    return request;
-  }
-
   // accept one single rpc req at a time
   class AcceptorThread implements Runnable {
 
-    public UcpRequest recvRequest(PeerInfo peerInfo) {
-      if (peerInfo == null) {
-        return null;
-      }
-//      ByteBuffer recvBuffer = BufferPool.getInstance().getABuffer(PAGE_SIZE, true)
-//          .nioBuffer();
-      ByteBuffer recvBuffer = ByteBuffer.allocateDirect(PAGE_SIZE);
-      LOG.info("recvBuffer capacity:{}:limit:{}:position:{}",
-          recvBuffer.capacity(), recvBuffer.limit(), recvBuffer.position());
-      recvBuffer.clear();
-      long tag = UcpUtils.generateTag(peerInfo.mRemoteAddr);
-      // currently only matching the ip, excluding port as ucx 1.15.0 doesn't expose ucpendpoint.getloaladdress
-      // when client establish remote conn
-      long tagMask = 0xFFFFFFFF0000L;
-      UcpRequest recvRequest = mGlobalWorker.recvTaggedNonBlocking(
-          recvBuffer, tag, tagMask, new UcxCallback() {
-            public void onSuccess(UcpRequest request) {
-              LOG.info("New req received from peer:{}", peerInfo);
-              tpe.execute(new RPCMessageHandler(peerInfo, recvBuffer));
-              LOG.info("onSuccess start receiving another req for peer:{}", peerInfo);
-              recvRequest(peerInfo);
-            }
-
-            public void onError(int ucsStatus, String errorMsg) {
-              LOG.error("Receive req errored, status:{}, errMsg:{}",
-                  ucsStatus, errorMsg);
-              LOG.info("onError start receiving another req for peer:{}", peerInfo);
-              recvRequest(peerInfo);
-            }
-          });
-      return recvRequest;
+    public UcpRequest recvEstablishConnRequest() {
+      ByteBuffer establishConnBuf = ByteBuffer.allocateDirect(AlluxioUcxUtils.METADATA_SIZE_COMMON);
+      // no need to register this buffer to UcpMemory,
+      // will go out of scope once call back is done handling
+      UcpRequest establishConnReq = mGlobalWorker.recvTaggedNonBlocking(establishConnBuf,
+          new UcxConnection.UcxConnectionEstablishCallBack(establishConnBuf, mGlobalWorker));
+      return establishConnReq;
     }
 
     public void acceptNewConn() {
@@ -262,6 +222,12 @@ public class UcpServer {
         PeerInfo peerInfo = new PeerInfo(
             connectionReq.getClientAddress(), connectionReq.getClientId());
         final AtomicReference<Boolean> newConn = new AtomicReference<>(false);
+        UcpEndpoint clientEpForConnect = mGlobalWorker.newEndpoint(new UcpEndpointParams()
+            .setPeerErrorHandlingMode()
+            .setConnectionRequest(connectionReq));
+        clientEpForConnect.close();
+
+
         mPeerEndpoints.compute(peerInfo, (pInfo, ep) -> {
           if (ep == null) {
             newConn.compareAndSet(false, true);
@@ -281,18 +247,18 @@ public class UcpServer {
             return ep;
           }
         });
-        if (newConn.get()) {
-          UcpRequest req = recvRequest(peerInfo);
-//          mReceiveRequests.offer(req);
-        }
       }
     }
 
     @Override
     public void run() {
-      while (true) {
+      UcpRequest reqToConn = recvEstablishConnRequest();
+      while (!Thread.interrupted()) {
         try {
-          acceptNewConn();
+//          acceptNewConn();
+          if (reqToConn.isCompleted()) {
+            reqToConn = recvEstablishConnRequest();
+          }
           while (mGlobalWorker.progress() == 0) {
             LOG.info("nothing to progress. wait for events..");
             try {
