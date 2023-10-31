@@ -44,8 +44,8 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
   }
 
   @Override
-  public void handle(UcxMessage message, UcpEndpoint remoteEndpoint) {
-    mRemoteEp = remoteEndpoint;
+  public void handle(UcxMessage message, UcxConnection remoteConnection) {
+    mRemoteEp = remoteConnection.getEndpoint();
     try {
       mReadRequest = Protocol.ReadRequest.parseFrom(message.getRPCMessage());
     } catch (InvalidProtocolBufferException e) {
@@ -72,7 +72,7 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
         // first 8 bytes -> sequence  second 8 bytes -> size
         ByteBuffer preamble = ByteBuffer.allocateDirect(16);
         preamble.clear();
-        long seq = mSequencer.incrementAndGet();
+        long seq = remoteConnection.getNextSequence();
         preamble.putLong(seq);
         preamble.putLong(readContentUcpMem.get().getLength());
         preamble.clear();
@@ -117,7 +117,7 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
     }// end for
     LOG.info("Handle read req:{} complete", mReadRequest);
     while (requests.stream().anyMatch(r -> !r.isCompleted())) {
-      LOG.info("Wait for all {} ucpreq to complete, sleep for 5 sec...");
+      LOG.info("Wait for all {} ucpreq to complete, sleep for 5 sec...", requests.size());
       try {
         Thread.sleep(5000);
       } catch (InterruptedException e) {

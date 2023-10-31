@@ -1,6 +1,7 @@
 package alluxio.worker.ucx;
 
 import com.google.common.base.MoreObjects;
+import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
 import io.netty.buffer.ByteBuf;
 import org.openucx.jucx.UcxCallback;
@@ -34,7 +35,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class UcxConnection {
   private static final Logger LOG = LoggerFactory.getLogger(UcxConnection.class);
-  private long mTag;
+  private long mTagToReceive;
+  private long mTagToSend;
   private UcpEndpoint mEndpoint;
   private InetSocketAddress mRemoteAddress;
   // tag 0 is always reserved for general metadata exchange.
@@ -42,6 +44,138 @@ public class UcxConnection {
   // UcxConn to its own counter (for active msg or other usages... keep as a placeholder for now)
   private static final ConcurrentHashMap<UcxConnection, Set<ActiveRequest>>
       mRemoteConnections = new ConcurrentHashMap<>();
+  // For streaming feature so we can send out-of-order data for multiplexing
+  private AtomicLong mSequencer = new AtomicLong(1L);
+
+  public UcxConnection() {
+  }
+
+  public long getTagToSend() {
+    return mTagToSend;
+  }
+
+  public void setTagToSend(long tagToSend) {
+    this.mTagToSend = tagToSend;
+  }
+
+  public long getTagToReceive() {
+    return mTagToReceive;
+  }
+
+  public void setTagToReceive(long tagToReceive) {
+    this.mTagToReceive = tagToReceive;
+  }
+
+  public UcpEndpoint getEndpoint() {
+    return mEndpoint;
+  }
+
+  public void setEndpoint(UcpEndpoint mEndpoint) {
+    this.mEndpoint = mEndpoint;
+  }
+
+  public InetSocketAddress getRemoteAddress() {
+    return mRemoteAddress;
+  }
+
+  public void setRemoteAddress(InetSocketAddress mRemoteAddress) {
+    this.mRemoteAddress = mRemoteAddress;
+  }
+
+  public long getNextSequence() {
+    return mSequencer.incrementAndGet();
+  }
+
+  @Override
+  public String toString() {
+    return MoreObjects.toStringHelper(this)
+        .add("UcpEndpoint", mEndpoint)
+        .add("TagToSend", mTagToSend)
+        .add("TagToReceive", mTagToReceive)
+        .add("RemoteAddress", mRemoteAddress)
+        .toString();
+  }
+
+  @Override
+  public boolean equals(Object other) {
+    if (other == this) {
+      return true;
+    }
+    if (!(other instanceof UcxConnection)) {
+      return false;
+    }
+    UcxConnection otherConn = (UcxConnection) other;
+    return Objects.equal(otherConn.getTagToReceive(), getTagToReceive())
+        && Objects.equal(otherConn.getTagToSend(), getTagToSend());
+  }
+
+  public void startRecvRPCRequest() {
+    Preconditions.checkNotNull(mEndpoint, "UcpEndpoint is null, this should not happen.");
+    // create a bytebuffer wrapped and protected by UcpMemory
+    // TODO(lucy) pool this UcpMem and reuse for next recvRpc,
+    // coz transfer into msg will have its own copy of buffer.
+    UcpMemory recvMemoryBlock =
+        UcxMemoryPool.allocateMemory(AlluxioUcxUtils.METADATA_SIZE_COMMON,
+        UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
+
+    ActiveRequest activeRequest = new ActiveRequest();
+    activeRequest.setUcpMemory(recvMemoryBlock);
+    final UcxConnection thisConn = this;
+    UcpRequest recvRequest = UcpServer.getInstance().getGlobalWorker().recvTaggedNonBlocking(
+        recvMemoryBlock.getAddress(), recvMemoryBlock.getLength(),
+        mTagToReceive, 0xFFFFFFFFFFFFL, new UcxCallback() {
+          public void onSuccess(UcpRequest request) {
+            LOG.info("New req received from peer:{}", mEndpoint);
+            try {
+              // this entire memory block is owned and registered by ucx
+              ByteBuffer rpcRecvBuffer = UcxUtils.getByteBufferView(
+                  recvMemoryBlock.getAddress(), recvMemoryBlock.getLength());
+              UcxMessage msg = UcxMessage.fromByteBuffer(rpcRecvBuffer);
+              mRemoteConnections.compute(thisConn, (conn, activeRequestSet) -> {
+                if (activeRequestSet == null) {
+                  return null;
+                }
+                try {
+                  activeRequest.close();
+                } catch (IOException e) {
+                  // actually there won't be checked exception thrown.
+                  LOG.error("Error of closing activeRequest:{}", activeRequest);
+                }
+                activeRequestSet.remove(activeRequest);
+                return activeRequestSet;
+              });
+              UcxRequestHandler reqHandler = msg.getRPCMessageType().mHandlerSupplier.get();
+              msg.getRPCMessageType().mStage.mThreadPool.execute(() -> {
+                try {
+                  reqHandler.handle(msg, thisConn);
+                } catch (Throwable ex) {
+                  LOG.error("Exception when handling req:{} from remote:{}",
+                      msg, mEndpoint);
+                }
+              });
+            } catch (IOException e) {
+              throw new RuntimeException(e);
+            }
+            LOG.info("onSuccess start receiving another req for remote:{}", mEndpoint);
+            startRecvRPCRequest();
+          }
+
+          public void onError(int ucsStatus, String errorMsg) {
+            LOG.error("Receive req errored, status:{}, errMsg:{}",
+                ucsStatus, errorMsg);
+            LOG.info("onError start receiving another req for remote:{}", mEndpoint);
+            startRecvRPCRequest();
+          }
+        });
+    activeRequest.setUcpRequest(recvRequest);
+    mRemoteConnections.compute(this, (conn, activeReqQ) -> {
+      if (activeReqQ == null) {
+        activeReqQ = new HashSet<>();
+      }
+      activeReqQ.add(activeRequest);
+      return activeReqQ;
+    });
+  }
 
   public static class ActiveRequest implements Closeable {
     // pending ucprequest created on this particular UcxConnection
@@ -91,112 +225,6 @@ public class UcxConnection {
     }
   }
 
-
-  public UcxConnection() {
-  }
-
-
-  public long getTag() {
-    return mTag;
-  }
-
-  public void setTag(long mTag) {
-    this.mTag = mTag;
-  }
-
-  public UcpEndpoint getEndpoint() {
-    return mEndpoint;
-  }
-
-  public void setEndpoint(UcpEndpoint mEndpoint) {
-    this.mEndpoint = mEndpoint;
-  }
-
-  public InetSocketAddress getRemoteAddress() {
-    return mRemoteAddress;
-  }
-
-  public void setRemoteAddress(InetSocketAddress mRemoteAddress) {
-    this.mRemoteAddress = mRemoteAddress;
-  }
-
-  @Override
-  public String toString() {
-    return MoreObjects.toStringHelper(this)
-        .add("UcpEndpoint", mEndpoint)
-        .add("tag", mTag)
-        .add("mRemoteAddress", mRemoteAddress)
-        .toString();
-  }
-
-  public void startRecvRPCRequest() {
-    Preconditions.checkNotNull(mEndpoint, "UcpEndpoint is null, this should not happen.");
-    // create a bytebuffer wrapped and protected by UcpMemory
-    // TODO(lucy) pool this UcpMem and reuse for next recvRpc,
-    // coz transfer into msg will have its own copy of buffer.
-    UcpMemory recvMemoryBlock =
-        UcxMemoryPool.allocateMemory(AlluxioUcxUtils.METADATA_SIZE_COMMON,
-        UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
-
-    ActiveRequest activeRequest = new ActiveRequest();
-    activeRequest.setUcpMemory(recvMemoryBlock);
-    final UcxConnection thisConn = this;
-    UcpRequest recvRequest = UcpServer.getInstance().getGlobalWorker().recvTaggedNonBlocking(
-        recvMemoryBlock.getAddress(), recvMemoryBlock.getLength(),
-        mTag, 0xFFFFFFFFFFFFL, new UcxCallback() {
-          public void onSuccess(UcpRequest request) {
-            LOG.info("New req received from peer:{}", mEndpoint);
-            try {
-              // this entire memory block is owned and registered by ucx
-              ByteBuffer rpcRecvBuffer = UcxUtils.getByteBufferView(
-                  recvMemoryBlock.getAddress(), recvMemoryBlock.getLength());
-              UcxMessage msg = UcxMessage.fromByteBuffer(rpcRecvBuffer);
-              mRemoteConnections.compute(thisConn, (conn, activeRequestSet) -> {
-                if (activeRequestSet == null) {
-                  return null;
-                }
-                try {
-                  activeRequest.close();
-                } catch (IOException e) {
-                  // actually there won't be checked exception thrown.
-                  LOG.error("Error of closing activeRequest:{}", activeRequest);
-                }
-                activeRequestSet.remove(activeRequest);
-                return activeRequestSet;
-              });
-              UcxRequestHandler reqHandler = msg.getRPCMessageType().mHandlerSupplier.get();
-              msg.getRPCMessageType().mStage.mThreadPool.execute(() -> {
-                try {
-                  reqHandler.handle(msg, mEndpoint);
-                } catch (Throwable ex) {
-                  LOG.error("Exception when handling req:{} from remote:{}",
-                      msg, mEndpoint);
-                }
-              });
-            } catch (IOException e) {
-              throw new RuntimeException(e);
-            }
-            LOG.info("onSuccess start receiving another req for remote:{}", mEndpoint);
-            startRecvRPCRequest();
-          }
-
-          public void onError(int ucsStatus, String errorMsg) {
-            LOG.error("Receive req errored, status:{}, errMsg:{}",
-                ucsStatus, errorMsg);
-            LOG.info("onError start receiving another req for remote:{}", mEndpoint);
-            startRecvRPCRequest();
-          }
-        });
-    activeRequest.setUcpRequest(recvRequest);
-    mRemoteConnections.compute(this, (conn, activeReqQ) -> {
-      if (activeReqQ == null) {
-        activeReqQ = new HashSet<>();
-      }
-      activeReqQ.add(activeRequest);
-      return activeReqQ;
-    });
-  }
-
   static class UcxConnectionEstablishCallBack extends UcxCallback {
     private ByteBuffer mEstablishConnBuf;
     private UcpWorker mWorker;
@@ -209,39 +237,50 @@ public class UcxConnection {
     public void onSuccess(UcpRequest request) {
       LOG.info("onSuccess for new ConnectionEstablish req.");
       mEstablishConnBuf.clear();
-      // long (tag assigned to remote) | int (worker addr size) | bytes (worker addr)
+      // long(tag for send) | long (tag for receive) | int (worker addr size) | bytes (worker addr)
       // check UcxUtils.buildConnectionMetadata for details
-      long tagRemoteAssignedToMe = mEstablishConnBuf.getLong();
+      long tagToSend = mEstablishConnBuf.getLong();
+      long tagToReceive = mEstablishConnBuf.getLong();
+      UcxConnection newConnection = new UcxConnection();
+      newConnection.setTagToReceive(tagToReceive);
+      newConnection.setTagToSend(tagToSend);
+
+
       int workerAddrSize = mEstablishConnBuf.getInt();
       ByteBuffer workerAddr = ByteBuffer.allocateDirect(workerAddrSize);
       mEstablishConnBuf.limit(mEstablishConnBuf.position() + workerAddrSize);
       workerAddr.put(mEstablishConnBuf);
 
-      long tagForRemote = mTagGenerator.incrementAndGet();
-      UcxConnection newConnection = new UcxConnection();
+      if (tagToSend == -1)
+        tagToSend = mTagGenerator.incrementAndGet();
       UcpEndpoint clientEp = mWorker.newEndpoint(new UcpEndpointParams()
           .setErrorHandler(new UcxConnectionErrorHandler(newConnection))
           .setPeerErrorHandlingMode()
           .setUcpAddress(workerAddr));
       newConnection.setEndpoint(clientEp);
-      newConnection.setTag(tagForRemote);
+      newConnection.setTagToSend(tagToSend);
+      newConnection.setTagToReceive(tagToReceive);
+      // TODO(lucy) bail if there's already existing connection? shouldn't happen
+      // tag send/recv is only unique to a one pair of connection
+      // reject or do sth here.
       mRemoteConnections.putIfAbsent(newConnection, new HashSet<>());
 
       // Send my info with client
-      // TODO!! allocate a registered mem and return back on Success
       UcpMemory recvMemoryBlock =
           UcxMemoryPool.allocateMemory(AlluxioUcxUtils.METADATA_SIZE_COMMON,
               UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
       AlluxioUcxUtils.writeConnectionMetadata(
+          tagToReceive,
+          tagToSend,
           UcxUtils.getByteBufferView(
               recvMemoryBlock.getAddress(), recvMemoryBlock.getLength()),
-          tagForRemote, mWorker);
+          mWorker);
       // acceptor thread will help progress
       clientEp.sendTaggedNonBlocking(recvMemoryBlock.getAddress(),
           recvMemoryBlock.getLength(), 0L, new UcxCallback() {
         public void onSuccess(UcpRequest request) {
-          LOG.info("onSuccess in sending back metadata info to client:{},tagForRemote:{}",
-              clientEp, tagForRemote);
+          LOG.info("onSuccess in sending back metadata info to client:{},ucxconn:{}",
+              clientEp, newConnection);
           recvMemoryBlock.close();
         }
 
@@ -280,4 +319,6 @@ public class UcxConnection {
       }
     }
   }
+
+
 }

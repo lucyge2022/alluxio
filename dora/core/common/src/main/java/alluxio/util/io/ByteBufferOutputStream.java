@@ -10,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.ReadOnlyBufferException;
 
 public class ByteBufferOutputStream extends DataOutputStream {
+  private final ByteBufferOutputStream.InternalOutputStream mInternalOutputStream;
 
   public static class InternalOutputStream extends OutputStream {
     private final ByteBuffer mBuffer;
@@ -48,6 +49,16 @@ public class ByteBufferOutputStream extends DataOutputStream {
 
   public ByteBufferOutputStream(ByteBufferOutputStream.InternalOutputStream internalOs) {
     super(internalOs);
+    mInternalOutputStream = internalOs;
+  }
+
+  public void write(ByteBuffer srcBuffer, int len) throws IOException {
+    if (srcBuffer.remaining() < len) {
+      throw new IOException("Not enough length:" + len + " to read from srcBuffer");
+    }
+    for (int i = 0; i < len; i++) {
+      mInternalOutputStream.write(srcBuffer.get());
+    }
   }
 
   @Override

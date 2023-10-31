@@ -2,6 +2,7 @@ package alluxio.worker.ucx;
 
 import alluxio.util.ThreadFactoryUtils;
 import alluxio.util.io.ByteBufferInputStream;
+import alluxio.util.io.ByteBufferOutputStream;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -50,9 +51,20 @@ public class UcxMessage {
     }
   }
 
+  public static void toByteBuffer(UcxMessage message, ByteBufferOutputStream bbos)
+      throws IOException {
+    bbos.writeLong(message.mMessageId);
+    bbos.writeInt(message.mRPCMessageType.ordinal());
+    int rpcMsgLen = message.getRPCMessage() != null ? message.getRPCMessage().remaining() : 0;
+    if (rpcMsgLen > 0) {
+      bbos.write(message.getRPCMessage(), rpcMsgLen);
+    }
+  }
+
   public enum Type {
     ReadRequest(() -> new ReadRequestStreamHandler(), Stage.IO),
     ReadRMARequest(() -> new ReadRequestRMAHandler(), Stage.IO),
+    Reply(() -> new ReplyHandler(), Stage.IO);
     ;
 
     public final Supplier<? extends UcxRequestHandler> mHandlerSupplier;

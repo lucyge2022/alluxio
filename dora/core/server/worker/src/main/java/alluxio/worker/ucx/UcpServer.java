@@ -58,6 +58,7 @@ public class UcpServer {
   public static final UcpContext sGlobalContext = new UcpContext(new UcpParams()
       .requestStreamFeature()
       .requestTagFeature()
+      .requestRmaFeature()
       .requestWakeupFeature());
   private int BIND_PORT = 1234;
 
@@ -102,7 +103,8 @@ public class UcpServer {
     mlocalCacheManager = LocalCacheManager.create(
         cacheManagerOptions, PageMetaStore.create(
             CacheManagerOptions.createForWorker(Configuration.global())));
-    mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams());
+    mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams()
+            .requestWakeupRMA());
     List<InetAddress> addressesToBind = getAllAddresses();
     UcpListenerParams listenerParams = new UcpListenerParams()
         .setConnectionHandler(new UcpListenerConnectionHandler() {
@@ -226,7 +228,6 @@ public class UcpServer {
             .setPeerErrorHandlingMode()
             .setConnectionRequest(connectionReq));
         clientEpForConnect.close();
-
 
         mPeerEndpoints.compute(peerInfo, (pInfo, ep) -> {
           if (ep == null) {
