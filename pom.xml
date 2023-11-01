@@ -193,11 +193,6 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
-        <groupId>org.openucx</groupId>
-        <artifactId>jucx</artifactId>
-        <version>1.15.0</version>
-      </dependency>
-      <dependency>
         <groupId>software.amazon.awssdk</groupId>
         <artifactId>s3</artifactId>
         <version>${awssdk.version}</version>
@@ -724,6 +719,11 @@
         <groupId>org.lz4</groupId>
         <artifactId>lz4-java</artifactId>
         <version>1.8.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.openucx</groupId>
+        <artifactId>jucx</artifactId>
+        <version>1.15.0</version>
       </dependency>
       <dependency>
         <groupId>org.reflections</groupId>
