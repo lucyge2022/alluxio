@@ -8,6 +8,7 @@ import alluxio.conf.PropertyKey;
 import alluxio.exception.PageNotFoundException;
 import alluxio.exception.runtime.UnknownRuntimeException;
 import alluxio.proto.dataserver.Protocol;
+import alluxio.ucx.AlluxioUcxUtils;
 import alluxio.util.io.ByteBufferInputStream;
 import alluxio.util.io.ByteBufferOutputStream;
 

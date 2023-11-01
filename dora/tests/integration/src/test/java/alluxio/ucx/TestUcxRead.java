@@ -7,7 +7,7 @@ import alluxio.client.file.CacheContext;
 import alluxio.client.file.cache.CacheManager;
 import alluxio.client.file.cache.LocalCacheManager;
 import alluxio.client.file.cache.PageId;
-import alluxio.client.file.dora.ucx.UcxDataReader;
+import alluxio.worker.ucx.UcxDataReader;
 import alluxio.conf.Configuration;
 import alluxio.proto.dataserver.Protocol;
 //import alluxio.worker.ucx.UcpServer;
@@ -28,7 +28,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Random;
 import java.util.function.Supplier;
 
-public class TestUcx {
+public class TestUcxRead {
 
   public int serverPort = 1234;
   public String serverHost = "localhost";

@@ -1,20 +1,12 @@
 package alluxio.util.io;
 
 import com.google.common.base.Preconditions;
-import io.netty.buffer.ByteBufInputStream;
-import io.netty.buffer.ByteBufOutputStream;
-import io.netty.buffer.Unpooled;
-import jdk.internal.util.xml.impl.Input;
 
-import java.io.DataInput;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.BufferOverflowException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
-import java.nio.ReadOnlyBufferException;
 
 public class ByteBufferInputStream extends DataInputStream {
   private final InternalInputStream mInternalInputStream;
