@@ -17,14 +17,13 @@ import org.openucx.jucx.ucp.UcpWorkerParams;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
-import java.util.concurrent.ExecutionException;
 
-public class TestUcxConnection {
+public class UcxConnectionTest {
   public static UcpContext sGlobalContext;
 
   @BeforeClass
-  public void initContext() {
+  public static void initContext() {
+    System.out.println("start initContext...");
     sGlobalContext = new UcpContext(new UcpParams()
         .requestStreamFeature()
         .requestTagFeature()
@@ -51,6 +50,10 @@ public class TestUcxConnection {
         listenerParams.setSockAddr(remoteAddr));
     Thread serverThread = new Thread(() -> {
       try {
+        while (serverWorker.progress() == 0) {
+          System.out.println("Nothing to progress, waiting on events..");
+          serverWorker.waitForEvents();
+        }
         UcpConnectionRequest incomeConnReq = incomingConn.get();
         if (incomeConnReq != null) {
           UcpEndpoint bootstrapEp = serverWorker.newEndpoint(new UcpEndpointParams()
@@ -61,6 +64,7 @@ public class TestUcxConnection {
           System.out.println("Conn established from server:" + ucxConnection.toString());
         }
       } catch (Exception e) {
+        System.out.println("Exception in server thread.");
         e.printStackTrace();
       }
     });
@@ -68,6 +72,7 @@ public class TestUcxConnection {
 
     UcpWorker clientWorker = sGlobalContext.newWorker(new UcpWorkerParams().requestThreadSafety());
     // client init conn
+    System.out.println("Starting init new conn...");
     UcxConnection connToServer = UcxConnection.initNewConnection(remoteAddr, clientWorker);
     System.out.println("Conn established to server:" + connToServer.toString());
     serverThread.join();
