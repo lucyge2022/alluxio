@@ -5,7 +5,8 @@ import alluxio.client.file.cache.LocalCacheManager;
 import alluxio.client.file.cache.PageMetaStore;
 import alluxio.conf.Configuration;
 import alluxio.proto.dataserver.Protocol;
-import alluxio.ucx.UcpUtils;
+import alluxio.ucx.AlluxioUcxUtils;
+import alluxio.worker.ucx.UcxConnection;
 import alluxio.util.ThreadFactoryUtils;
 
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -221,45 +222,28 @@ public class UcpServer {
     public void acceptNewConn() {
       UcpConnectionRequest connectionReq = mConnectionRequests.poll();
       if (connectionReq != null) {
-        PeerInfo peerInfo = new PeerInfo(
-            connectionReq.getClientAddress(), connectionReq.getClientId());
-        final AtomicReference<Boolean> newConn = new AtomicReference<>(false);
-        UcpEndpoint clientEpForConnect = mGlobalWorker.newEndpoint(new UcpEndpointParams()
-            .setPeerErrorHandlingMode()
-            .setConnectionRequest(connectionReq));
-        clientEpForConnect.close();
-
-        mPeerEndpoints.compute(peerInfo, (pInfo, ep) -> {
-          if (ep == null) {
-            newConn.compareAndSet(false, true);
-            return mGlobalWorker.newEndpoint(new UcpEndpointParams()
-                .setErrorHandler((errHandleEp, status, errorMsg) -> {
-                  UcpEndpoint connectedEp = mPeerEndpoints.remove(peerInfo);
-                  if (connectedEp != null) {
-                    LOG.info("Closing peer:{} on error:{}", peerInfo, errorMsg);
-                    connectedEp.close();
-                  }
-                    })
-                .setPeerErrorHandlingMode()
-                .setConnectionRequest(connectionReq));
-          } else {
-            LOG.info("Endpoint for peer:{} already exist, rejecting connection req...", peerInfo);
-            connectionReq.reject();
-            return ep;
-          }
-        });
+        try {
+          UcpEndpoint bootstrapEp = mGlobalWorker.newEndpoint(new UcpEndpointParams()
+              .setPeerErrorHandlingMode()
+              .setConnectionRequest(connectionReq));
+          UcxConnection ucxConnection = UcxConnection.acceptIncomingConnection(
+              bootstrapEp, mGlobalWorker, connectionReq.getClientAddress());
+          ucxConnection.startRecvRPCRequest();
+        } catch (Exception e) {
+          LOG.error("Error in acceptNewConn:", e);
+        }
       }
     }
 
     @Override
     public void run() {
-      UcpRequest reqToConn = recvEstablishConnRequest();
+//      UcpRequest reqToConn = recvEstablishConnRequest();
       while (!Thread.interrupted()) {
         try {
-//          acceptNewConn();
-          if (reqToConn.isCompleted()) {
-            reqToConn = recvEstablishConnRequest();
-          }
+          acceptNewConn();
+//          if (reqToConn.isCompleted()) {
+//            reqToConn = recvEstablishConnRequest();
+//          }
           while (mGlobalWorker.progress() == 0) {
             LOG.info("nothing to progress. wait for events..");
             try {

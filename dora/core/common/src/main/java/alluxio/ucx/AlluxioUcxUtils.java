@@ -1,10 +1,11 @@
-package alluxio.worker.ucx;
+package alluxio.ucx;
 
-import io.netty.buffer.ByteBuf;
 import org.openucx.jucx.ucp.UcpWorker;
 
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class AlluxioUcxUtils {
   public static final int METADATA_SIZE_COMMON = 4096;

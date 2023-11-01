@@ -6,7 +6,7 @@ import alluxio.client.file.cache.CacheManagerOptions;
 import alluxio.client.file.cache.LocalCacheManager;
 import alluxio.client.file.cache.PageId;
 import alluxio.client.file.cache.PageMetaStore;
-import alluxio.client.file.dora.ucx.UcxDataReader;
+import alluxio.worker.ucx.UcxDataReader;
 import alluxio.conf.Configuration;
 import alluxio.proto.dataserver.Protocol;
 import alluxio.util.HashUtils;
@@ -78,8 +78,12 @@ public class UcpClientTest {
     return bytes;
   }
 
+  public void testRMARead() {
 
-  public void testClientServer() {
+  }
+
+
+  public void testClientServer() throws IOException {
     String dummyUfsPath = "hdfs://localhost:9000/randomUfsPath";
     int pageSize = 1024 * 1024;
     SampleData sampleData = new SampleData(generateRandomData(1024 * 1024));
@@ -88,10 +92,6 @@ public class UcpClientTest {
     };
     int totalLen = 5 * pageSize;
     int totalPages = totalLen / pageSize;
-//    for (int i=0; i<totalPages; i++) {
-//      PageId pageId = new PageId(new AlluxioURI(dummyUfsPath).hash(), i);
-//      mLocalCacheManager.cache(pageId, CacheContext.defaults(), externalDataSupplier);
-//    }
     InetSocketAddress serverAddr = new InetSocketAddress(mHost, mPort);
     Protocol.OpenUfsBlockOptions openUfsBlockOptions =
         Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(dummyUfsPath)

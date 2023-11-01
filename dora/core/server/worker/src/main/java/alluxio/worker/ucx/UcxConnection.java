@@ -1,5 +1,7 @@
 package alluxio.worker.ucx;
 
+import alluxio.ucx.AlluxioUcxUtils;
+
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
@@ -7,6 +9,7 @@ import io.netty.buffer.ByteBuf;
 import org.openucx.jucx.UcxCallback;
 import org.openucx.jucx.UcxException;
 import org.openucx.jucx.UcxUtils;
+import org.openucx.jucx.ucp.UcpConstants;
 import org.openucx.jucx.ucp.UcpEndpoint;
 import org.openucx.jucx.ucp.UcpEndpointErrorHandler;
 import org.openucx.jucx.ucp.UcpEndpointParams;
@@ -27,23 +30,25 @@ import java.util.LinkedList;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Handle all ucx connection related logics.
  * Connection establish / Disconnect / Error Handling etc.
  */
-public class UcxConnection {
+public class UcxConnection implements Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(UcxConnection.class);
-  private long mTagToReceive;
-  private long mTagToSend;
+  private long mTagToReceive = -1L;
+  private long mTagToSend = -1L;
   private UcpEndpoint mEndpoint;
   private InetSocketAddress mRemoteAddress;
+  private AtomicBoolean mClosed = new AtomicBoolean(false);
   // tag 0 is always reserved for general metadata exchange.
   private static final AtomicLong mTagGenerator = new AtomicLong(1L);
   // UcxConn to its own counter (for active msg or other usages... keep as a placeholder for now)
   private static final ConcurrentHashMap<UcxConnection, Set<ActiveRequest>>
-      mRemoteConnections = new ConcurrentHashMap<>();
+      sRemoteConnections = new ConcurrentHashMap<>();
   // For streaming feature so we can send out-of-order data for multiplexing
   private AtomicLong mSequencer = new AtomicLong(1L);
 
@@ -131,7 +136,7 @@ public class UcxConnection {
               ByteBuffer rpcRecvBuffer = UcxUtils.getByteBufferView(
                   recvMemoryBlock.getAddress(), recvMemoryBlock.getLength());
               UcxMessage msg = UcxMessage.fromByteBuffer(rpcRecvBuffer);
-              mRemoteConnections.compute(thisConn, (conn, activeRequestSet) -> {
+              sRemoteConnections.compute(thisConn, (conn, activeRequestSet) -> {
                 if (activeRequestSet == null) {
                   return null;
                 }
@@ -168,7 +173,7 @@ public class UcxConnection {
           }
         });
     activeRequest.setUcpRequest(recvRequest);
-    mRemoteConnections.compute(this, (conn, activeReqQ) -> {
+    sRemoteConnections.compute(this, (conn, activeReqQ) -> {
       if (activeReqQ == null) {
         activeReqQ = new HashSet<>();
       }
@@ -225,7 +230,126 @@ public class UcxConnection {
     }
   }
 
-  static class UcxConnectionEstablishCallBack extends UcxCallback {
+
+  public static UcxConnection initNewConnection(InetSocketAddress remoteAddr, UcpWorker worker)
+      throws Exception {
+    LOG.info("Initiating server connection for {}", remoteAddr);
+    UcpEndpoint bootstrapEp = worker.newEndpoint(
+        new UcpEndpointParams()
+            .setPeerErrorHandlingMode()
+            .setErrorHandler((ep, status, errorMsg) ->
+                LOG.error("[ERROR] creating ep to remote:"
+                    + remoteAddr + " errored out: " + errorMsg
+                    + " status:" + status + ",ep:" + ep.toString()))
+            .setSocketAddress(remoteAddr));
+
+    UcxConnection newConnection = new UcxConnection();
+    newConnection.setTagToReceive(mTagGenerator.incrementAndGet());
+    // generate tag to recv from remote, build up connectionEstablishBuf
+
+    ByteBuffer establishConnBuf = ByteBuffer.allocateDirect(AlluxioUcxUtils.METADATA_SIZE_COMMON);
+    AlluxioUcxUtils.writeConnectionMetadata(newConnection.getTagToSend(),
+        newConnection.getTagToReceive(),establishConnBuf, worker);
+    establishConnBuf.clear();
+    // no need to register this buffer to UcpMemory,
+    // will go out of scope once call back is done handling
+    UcpRequest sendReq = bootstrapEp.sendStreamNonBlocking(
+        UcxUtils.getAddress(establishConnBuf), establishConnBuf.capacity(), null);
+    worker.progressRequest(sendReq);
+    establishConnBuf.clear();
+    UcpRequest recvReq = bootstrapEp.recvStreamNonBlocking(
+        UcxUtils.getAddress(establishConnBuf), establishConnBuf.capacity(),
+        UcpConstants.UCP_STREAM_RECV_FLAG_WAITALL, null);
+    worker.progressRequest(recvReq);
+    // Parse coming-back buf
+    // From the sender of the buf's point of view:
+    // long(tag for send ) | long (tag for receive) | int (worker addr size) | bytes (worker addr)
+    // check UcxUtils.buildConnectionMetadata for details
+    establishConnBuf.clear();
+    long tagRemoteToSend = establishConnBuf.getLong();
+    long tagRemoteToReceive = establishConnBuf.getLong();
+    int workerAddrSize = establishConnBuf.getInt();
+    ByteBuffer workerAddr = ByteBuffer.allocateDirect(workerAddrSize);
+    establishConnBuf.limit(establishConnBuf.position() + workerAddrSize);
+    workerAddr.put(establishConnBuf);
+
+    UcpEndpoint remoteEp = worker.newEndpoint(new UcpEndpointParams()
+        .setErrorHandler(new UcxConnectionErrorHandler(newConnection))
+        .setPeerErrorHandlingMode()
+        .setUcpAddress(workerAddr));
+    newConnection.setEndpoint(remoteEp);
+
+    Preconditions.checkArgument(tagRemoteToSend == newConnection.getTagToReceive(),
+        "Mismatch on the tag I assigned to remote");
+    newConnection.setTagToSend(tagRemoteToReceive);
+
+    bootstrapEp.closeNonBlockingFlush();
+    return newConnection;
+  }
+
+  public static UcxConnection acceptIncomingConnection(
+      UcpEndpoint bootstrapEp, UcpWorker worker, InetSocketAddress remoteAddr)
+      throws Exception {
+    UcxConnection newConnection = new UcxConnection();
+    newConnection.setRemoteAddress(remoteAddr);
+    ByteBuffer establishConnBuf = ByteBuffer.allocateDirect(AlluxioUcxUtils.METADATA_SIZE_COMMON);
+    UcpRequest recvReq = bootstrapEp.recvStreamNonBlocking(
+        UcxUtils.getAddress(establishConnBuf), establishConnBuf.capacity(),
+        UcpConstants.UCP_STREAM_RECV_FLAG_WAITALL, null);
+    newConnection.setEndpoint(bootstrapEp);
+    worker.progressRequest(recvReq);
+    establishConnBuf.clear();
+    long tagRemoteToSend = establishConnBuf.getLong();
+    long tagRemoteToReceive = establishConnBuf.getLong();
+    int workerAddrSize = establishConnBuf.getInt();
+    ByteBuffer workerAddr = ByteBuffer.allocateDirect(workerAddrSize);
+    establishConnBuf.limit(establishConnBuf.position() + workerAddrSize);
+    workerAddr.put(establishConnBuf);
+
+    Preconditions.checkArgument(tagRemoteToSend == -1,
+        "I haven't assigned tag for remote to receive");
+    // generate tag for remote to receive
+    tagRemoteToSend = mTagGenerator.incrementAndGet();
+    newConnection.setTagToSend(tagRemoteToReceive);
+    newConnection.setTagToReceive(tagRemoteToSend);
+
+    UcpEndpoint remoteEp = worker.newEndpoint(new UcpEndpointParams()
+        .setErrorHandler(new UcxConnectionErrorHandler(newConnection))
+        .setPeerErrorHandlingMode()
+        .setUcpAddress(workerAddr));
+    newConnection.setEndpoint(remoteEp);
+
+    // build establishConnBuf
+    AlluxioUcxUtils.writeConnectionMetadata(newConnection.getTagToSend(),
+        newConnection.getTagToReceive(),establishConnBuf, worker);
+    establishConnBuf.clear();
+    UcpRequest sendReq = bootstrapEp.sendStreamNonBlocking(
+        UcxUtils.getAddress(establishConnBuf), establishConnBuf.capacity(), new UcxCallback() {
+          public void onError(int ucsStatus, String errorMsg) {
+            LOG.error("error in acking to remote conn establishment req. Closing new UcxConnection..." +
+                    "ucsStatus:{},errorMsg:{}"
+              , ucsStatus, errorMsg);
+            newConnection.close();
+            throw new UcxException(errorMsg);
+          }
+        });
+    worker.progressRequest(sendReq);
+    // no need for this oob establish connection ep, close it
+    bootstrapEp.closeNonBlockingFlush();
+    return newConnection;
+  }
+
+  public void close() {
+    if (!mClosed.compareAndSet(false, true)) {
+      LOG.warn("UcxConnection:{} already closed.", this);
+    }
+    if (mEndpoint != null) {
+      LOG.warn("Closing remote ep:{}", mEndpoint);
+      mEndpoint.closeNonBlockingFlush();
+    }
+  }
+
+  public static class UcxConnectionEstablishCallBack extends UcxCallback {
     private ByteBuffer mEstablishConnBuf;
     private UcpWorker mWorker;
 
@@ -263,7 +387,7 @@ public class UcxConnection {
       // TODO(lucy) bail if there's already existing connection? shouldn't happen
       // tag send/recv is only unique to a one pair of connection
       // reject or do sth here.
-      mRemoteConnections.putIfAbsent(newConnection, new HashSet<>());
+      sRemoteConnections.putIfAbsent(newConnection, new HashSet<>());
 
       // Send my info with client
       UcpMemory recvMemoryBlock =

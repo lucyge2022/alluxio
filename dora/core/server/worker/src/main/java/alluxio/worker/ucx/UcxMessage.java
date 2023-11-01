@@ -64,7 +64,7 @@ public class UcxMessage {
   public enum Type {
     ReadRequest(() -> new ReadRequestStreamHandler(), Stage.IO),
     ReadRMARequest(() -> new ReadRequestRMAHandler(), Stage.IO),
-    Reply(() -> new ReplyHandler(), Stage.IO);
+    Reply(null, Stage.IO);
     ;
 
     public final Supplier<? extends UcxRequestHandler> mHandlerSupplier;

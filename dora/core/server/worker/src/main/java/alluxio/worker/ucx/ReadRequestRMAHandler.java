@@ -2,16 +2,16 @@ package alluxio.worker.ucx;
 
 import alluxio.AlluxioURI;
 import alluxio.client.file.cache.PageId;
+import alluxio.concurrent.jsr.CompletableFuture;
 import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
 import alluxio.exception.PageNotFoundException;
+import alluxio.exception.runtime.UnknownRuntimeException;
 import alluxio.proto.dataserver.Protocol;
 import alluxio.util.io.ByteBufferInputStream;
 import alluxio.util.io.ByteBufferOutputStream;
 
 import com.google.common.base.Preconditions;
-import com.google.protobuf.InvalidProtocolBufferException;
-import io.netty.buffer.ByteBuf;
 import org.openucx.jucx.UcxCallback;
 import org.openucx.jucx.UcxException;
 import org.openucx.jucx.UcxUtils;
@@ -28,6 +28,9 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ReadRequestRMAHandler implements UcxRequestHandler {
   private static final Logger LOG = LoggerFactory.getLogger(ReadRequestRMAHandler.class);
@@ -71,6 +74,8 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
     long remoteAddrPosition = remoteMemAddress;
 
     List<UcpRequest> requests = new ArrayList<>();
+    AsyncFuture<String> asyncFuture = new AsyncFuture<>();
+    int totalRequests = 0;
     int bytesRead = 0;
     for (; bytesRead < totalLength; ) {
       int pageIndex = (int)(offset / pageSize);
@@ -94,36 +99,38 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
               public void onSuccess(UcpRequest request) {
                 LOG.info("onSuccess put pageid:{}:pageOffset:{}:len:{}",
                     pageId, pageOffset, readLen);
+                asyncFuture.complete(String.format("pageid:%d:pageOffset:%d:len:%d",
+                    pageId, pageOffset, readLen));
               }
 
               public void onError(int ucsStatus, String errorMsg) {
                 LOG.error("onError put pageid:{}:pageOffset:{}:len:{}"
                         + " ucsStatus:{}:errMsg:{}",
                     pageId, pageOffset, readLen, ucsStatus, errorMsg);
-//                throw new UcxException(errorMsg);
+                asyncFuture.fail(new UcxException(errorMsg));
               }
             });
-        requests.add(putRequest);
+        totalRequests += 1;
       } catch (PageNotFoundException | IOException e) {
         throw new RuntimeException(e);
       }
     } // end for
-    LOG.info("Handle RMA read req:{} complete", readRequest);
-    while (requests.stream().anyMatch(r -> !r.isCompleted())) {
-      LOG.info("Wait for all {} ucpreq to complete, sleep for 5 sec...", requests.size());
-      try {
-        Thread.sleep(5000);
-      } catch (InterruptedException e) {
-        throw new RuntimeException(e);
-      }
+    LOG.info("Handle RMA read req:{} complete, blockingly wait for all RMA PUT to compelte",
+        readRequest);
+    asyncFuture.setTotalExpected(totalRequests);
+    try {
+      asyncFuture.get();
+    } catch (ExecutionException | InterruptedException e) {
+      throw new UnknownRuntimeException("Exception during waiting for RMA PUT to complete.");
     }
+
     LOG.info("All PUT request completed, notifying client...");
     Protocol.ReadResponseRMA readResponseRMA = Protocol.ReadResponseRMA.newBuilder()
         .setReadLength(bytesRead).build();
     byte[] responseBytes = readResponseRMA.toByteArray();
     UcxMessage replyMessage = new UcxMessage(message.getMessageId(),
         UcxMessage.Type.Reply,
-        null); // reply -> Protocol.ReadResponseRMA
+        ByteBuffer.wrap(responseBytes)); // reply -> Protocol.ReadResponseRMA
     UcpMemory relyMemoryBlock = UcxMemoryPool.allocateMemory(AlluxioUcxUtils.METADATA_SIZE_COMMON,
         UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
     ByteBuffer replyBuffer = UcxUtils.getByteBufferView(relyMemoryBlock.getAddress(),
@@ -134,23 +141,30 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
+    CompletableFuture<Boolean> completed = new CompletableFuture<>();
     UcpRequest req = remoteConnection.getEndpoint().sendTaggedNonBlocking(
         replyBuffer, remoteConnection.getTagToSend(), new UcxCallback() {
       public void onSuccess(UcpRequest request) {
         LOG.error("onSuccess");
+        completed.complete(true);
       }
 
       public void onError(int ucsStatus, String errorMsg) {
+        completed.complete(false);
         throw new UcxException(errorMsg);
       }
     });
-    while (!req.isCompleted()) {
-      LOG.info("Wait for RMA reply msg, sleep for 5 sec...", requests.size());
-      try {
-        Thread.sleep(5000);
-      } catch (InterruptedException e) {
-        throw new RuntimeException(e);
+    LOG.info("Blockingly wait for completion reply msg sending...");
+    boolean completeSending = false;
+    try {
+      completeSending = completed.get();
+      if (!completeSending) {
+        throw new UnknownRuntimeException(String.format("Error sending compeletion reply after handling ucxmsg:%s",
+            message));
       }
+    } catch (InterruptedException | ExecutionException e) {
+      throw new UnknownRuntimeException(String.format("Error sending compeletion reply after handling ucxmsg:%s",
+          message));
     }
   }
 }
