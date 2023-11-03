@@ -244,6 +244,7 @@ public class UcxConnection implements Closeable {
             .setSocketAddress(remoteAddr));
 
     UcxConnection newConnection = new UcxConnection();
+    newConnection.setRemoteAddress(remoteAddr);
     newConnection.setTagToReceive(mTagGenerator.incrementAndGet());
     // generate tag to recv from remote, build up connectionEstablishBuf
 
@@ -320,6 +321,7 @@ public class UcxConnection implements Closeable {
     newConnection.setEndpoint(remoteEp);
 
     // build establishConnBuf
+    establishConnBuf.clear();
     AlluxioUcxUtils.writeConnectionMetadata(newConnection.getTagToSend(),
         newConnection.getTagToReceive(),establishConnBuf, worker);
     establishConnBuf.clear();

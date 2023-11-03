@@ -1,7 +1,11 @@
 package alluxio.worker.ucx;
 
 import alluxio.concurrent.jsr.CompletableFuture;
+import alluxio.conf.PropertyKey;
+import alluxio.util.CommonUtils;
+import alluxio.util.WaitForOptions;
 
+import org.apache.log4j.PropertyConfigurator;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.openucx.jucx.ucp.UcpConnectionRequest;
@@ -14,16 +18,25 @@ import org.openucx.jucx.ucp.UcpListenerParams;
 import org.openucx.jucx.ucp.UcpParams;
 import org.openucx.jucx.ucp.UcpWorker;
 import org.openucx.jucx.ucp.UcpWorkerParams;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.Properties;
 
 public class UcxConnectionTest {
   public static UcpContext sGlobalContext;
+  private static Logger LOG = LoggerFactory.getLogger(UcxConnectionTest.class);
+
 
   @BeforeClass
   public static void initContext() {
-    System.out.println("start initContext...");
+//    PropertyConfigurator.configure("/root/github/alluxio/conf/log4j.properties");
+//    Properties props = new Properties();
+//    props.setProperty(PropertyKey.LOGGER_TYPE.toString(), "Console");
+//    System.out.println("start initContext...");
+
     sGlobalContext = new UcpContext(new UcpParams()
         .requestStreamFeature()
         .requestTagFeature()
@@ -41,13 +54,14 @@ public class UcxConnectionTest {
         .setConnectionHandler(new UcpListenerConnectionHandler() {
           @Override
           public void onConnectionRequest(UcpConnectionRequest connectionRequest) {
+            System.out.println("Got incoming req...");
             incomingConn.complete(connectionRequest);
-//            mConnectionRequests.offer(connectionRequest);
           }
         });
     InetSocketAddress remoteAddr = new InetSocketAddress(localAddr, serverPort);
     UcpListener ucpListener = serverWorker.newListener(
         listenerParams.setSockAddr(remoteAddr));
+    System.out.println("Bound UcpListener on address:" + ucpListener.getAddress());
     Thread serverThread = new Thread(() -> {
       try {
         while (serverWorker.progress() == 0) {
@@ -77,5 +91,4 @@ public class UcxConnectionTest {
     System.out.println("Conn established to server:" + connToServer.toString());
     serverThread.join();
   }
-
 }
