@@ -143,8 +143,8 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
       throw new RuntimeException(e);
     }
     CompletableFuture<Boolean> completed = new CompletableFuture<>();
-    UcpRequest req = remoteConnection.getEndpoint().sendTaggedNonBlocking(
-        replyBuffer, remoteConnection.getTagToSend(), new UcxCallback() {
+    UcpRequest req = remoteConnection.getEndpoint().sendStreamNonBlocking(
+        replyBuffer, new UcxCallback() {
       public void onSuccess(UcpRequest request) {
         LOG.error("onSuccess");
         completed.complete(true);

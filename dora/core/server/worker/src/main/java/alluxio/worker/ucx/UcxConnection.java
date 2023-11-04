@@ -351,83 +351,6 @@ public class UcxConnection implements Closeable {
     }
   }
 
-  public static class UcxConnectionEstablishCallBack extends UcxCallback {
-    private ByteBuffer mEstablishConnBuf;
-    private UcpWorker mWorker;
-
-    public UcxConnectionEstablishCallBack(ByteBuffer establishConnBuf, UcpWorker worker) {
-      mEstablishConnBuf = establishConnBuf;
-      mWorker = worker;
-    }
-
-    public void onSuccess(UcpRequest request) {
-      LOG.info("onSuccess for new ConnectionEstablish req.");
-      mEstablishConnBuf.clear();
-      // long(tag for send) | long (tag for receive) | int (worker addr size) | bytes (worker addr)
-      // check UcxUtils.buildConnectionMetadata for details
-      long tagToSend = mEstablishConnBuf.getLong();
-      long tagToReceive = mEstablishConnBuf.getLong();
-      UcxConnection newConnection = new UcxConnection();
-      newConnection.setTagToReceive(tagToReceive);
-      newConnection.setTagToSend(tagToSend);
-
-
-      int workerAddrSize = mEstablishConnBuf.getInt();
-      ByteBuffer workerAddr = ByteBuffer.allocateDirect(workerAddrSize);
-      mEstablishConnBuf.limit(mEstablishConnBuf.position() + workerAddrSize);
-      workerAddr.put(mEstablishConnBuf);
-
-      if (tagToSend == -1)
-        tagToSend = mTagGenerator.incrementAndGet();
-      UcpEndpoint clientEp = mWorker.newEndpoint(new UcpEndpointParams()
-          .setErrorHandler(new UcxConnectionErrorHandler(newConnection))
-          .setPeerErrorHandlingMode()
-          .setUcpAddress(workerAddr));
-      newConnection.setEndpoint(clientEp);
-      newConnection.setTagToSend(tagToSend);
-      newConnection.setTagToReceive(tagToReceive);
-      // TODO(lucy) bail if there's already existing connection? shouldn't happen
-      // tag send/recv is only unique to a one pair of connection
-      // reject or do sth here.
-      sRemoteConnections.putIfAbsent(newConnection, new HashSet<>());
-
-      // Send my info with client
-      UcpMemory recvMemoryBlock =
-          UcxMemoryPool.allocateMemory(AlluxioUcxUtils.METADATA_SIZE_COMMON,
-              UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
-      AlluxioUcxUtils.writeConnectionMetadata(
-          tagToReceive,
-          tagToSend,
-          UcxUtils.getByteBufferView(
-              recvMemoryBlock.getAddress(), recvMemoryBlock.getLength()),
-          mWorker);
-      // acceptor thread will help progress
-      clientEp.sendTaggedNonBlocking(recvMemoryBlock.getAddress(),
-          recvMemoryBlock.getLength(), 0L, new UcxCallback() {
-        public void onSuccess(UcpRequest request) {
-          LOG.info("onSuccess in sending back metadata info to client:{},ucxconn:{}",
-              clientEp, newConnection);
-          recvMemoryBlock.close();
-        }
-
-        public void onError(int ucsStatus, String errorMsg) {
-          LOG.error("onError in sending back metadata info to client:{},ucsStatus:{},errMsg:{}",
-              clientEp, ucsStatus, errorMsg);
-          recvMemoryBlock.close();
-        }
-      });
-      LOG.info("Connection established with remote:{}, start recv-ing RPC request...",
-          newConnection);
-      newConnection.startRecvRPCRequest();
-    }
-
-    public void onError(int ucsStatus, String errorMsg) {
-      LOG.error("onError for new ConnectionEstablish req.ucsStatus:{}:errMsg:{}",
-          ucsStatus, errorMsg);
-      throw new UcxException(errorMsg);
-    }
-  }
-
   static class UcxConnectionErrorHandler implements UcpEndpointErrorHandler {
     private final UcxConnection mUcxConnection;
     public UcxConnectionErrorHandler(UcxConnection ucxConnection) {
@@ -445,6 +368,4 @@ public class UcxConnection implements Closeable {
       }
     }
   }
-
-
 }

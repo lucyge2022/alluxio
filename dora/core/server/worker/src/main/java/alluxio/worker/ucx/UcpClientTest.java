@@ -78,10 +78,6 @@ public class UcpClientTest {
     return bytes;
   }
 
-  public void testRMARead() {
-
-  }
-
 
   public void testClientServer() throws IOException {
     String dummyUfsPath = "hdfs://localhost:9000/randomUfsPath";

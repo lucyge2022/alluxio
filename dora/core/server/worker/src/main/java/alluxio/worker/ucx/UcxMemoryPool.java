@@ -1,5 +1,6 @@
 package alluxio.worker.ucx;
 
+import org.openucx.jucx.UcxUtils;
 import org.openucx.jucx.ucp.UcpMemMapParams;
 import org.openucx.jucx.ucp.UcpMemory;
 import org.openucx.jucx.ucs.UcsConstants;
@@ -17,6 +18,12 @@ public class UcxMemoryPool {
         .setMemoryType(memType);
     UcpMemory allocMem = UcpServer.sGlobalContext.memoryMap(memMapParams);
     return allocMem;
+  }
+
+  public static UcpMemory registerMemory(long addr, long length) {
+    UcpMemory registerdMem = UcpServer.sGlobalContext.memoryMap(new UcpMemMapParams()
+        .setAddress(addr).setLength(length).nonBlocking());
+    return registerdMem;
   }
 
 }

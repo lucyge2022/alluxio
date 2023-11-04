@@ -50,6 +50,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.annotation.Nullable;
 
 public class UcpServer {
   private static final Logger LOG = LoggerFactory.getLogger(UcpServer.class);
@@ -61,7 +62,7 @@ public class UcpServer {
       .requestTagFeature()
       .requestRmaFeature()
       .requestWakeupFeature());
-  private int BIND_PORT = 1234;
+  public static int BIND_PORT = 1234;
 
   private UcpWorker mGlobalWorker;
   private Map<PeerInfo, UcpEndpoint> mPeerEndpoints = new ConcurrentHashMap<>();
@@ -88,7 +89,7 @@ public class UcpServer {
       if (sInstance != null)
         return sInstance;
       try {
-        sInstance = new UcpServer();
+        sInstance = new UcpServer(null);
       } catch (IOException e) {
         throw new RuntimeException(e);
       }
@@ -98,12 +99,16 @@ public class UcpServer {
     }
   }
 
-  public UcpServer() throws IOException {
+  public UcpServer(@Nullable LocalCacheManager localCacheManager) throws IOException {
+    if (localCacheManager == null) {
     CacheManagerOptions cacheManagerOptions =
         CacheManagerOptions.createForWorker(Configuration.global());
     mlocalCacheManager = LocalCacheManager.create(
         cacheManagerOptions, PageMetaStore.create(
             CacheManagerOptions.createForWorker(Configuration.global())));
+    } else {
+      mlocalCacheManager = localCacheManager;
+    }
     mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams()
             .requestWakeupRMA());
     List<InetAddress> addressesToBind = getAllAddresses();
@@ -134,14 +139,10 @@ public class UcpServer {
   }
 
   public static void main(String[] args) {
-    try {
-      LOG.info("Starting ucp server...");
-      UcpServer ucpServer = new UcpServer();
-      LOG.info("Awaiting termination...");
-      ucpServer.awaitTermination();
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
+    LOG.info("Starting ucp server...");
+    UcpServer ucpServer = UcpServer.getInstance();
+    LOG.info("Awaiting termination...");
+    ucpServer.awaitTermination();
   }
 
 
@@ -209,15 +210,6 @@ public class UcpServer {
 
   // accept one single rpc req at a time
   class AcceptorThread implements Runnable {
-
-    public UcpRequest recvEstablishConnRequest() {
-      ByteBuffer establishConnBuf = ByteBuffer.allocateDirect(AlluxioUcxUtils.METADATA_SIZE_COMMON);
-      // no need to register this buffer to UcpMemory,
-      // will go out of scope once call back is done handling
-      UcpRequest establishConnReq = mGlobalWorker.recvTaggedNonBlocking(establishConnBuf,
-          new UcxConnection.UcxConnectionEstablishCallBack(establishConnBuf, mGlobalWorker));
-      return establishConnReq;
-    }
 
     public void acceptNewConn() {
       UcpConnectionRequest connectionReq = mConnectionRequests.poll();
