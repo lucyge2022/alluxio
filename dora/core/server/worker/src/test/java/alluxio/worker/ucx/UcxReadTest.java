@@ -24,7 +24,6 @@ import alluxio.worker.ucx.UcpServer;
 import alluxio.worker.ucx.UcxDataReader;
 import alluxio.conf.Configuration;
 import alluxio.proto.dataserver.Protocol;
-//import alluxio.worker.ucx.UcpServer;
 
 import com.google.common.collect.ImmutableList;
 import org.apache.commons.codec.binary.Hex;
@@ -40,7 +39,6 @@ import org.openucx.jucx.ucp.UcpWorkerParams;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
