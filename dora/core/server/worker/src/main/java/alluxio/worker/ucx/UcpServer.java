@@ -48,6 +48,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -82,6 +83,10 @@ public class UcpServer {
   private ExecutorService mAcceptorExecutor =  Executors.newFixedThreadPool(1);
 
   public static UcpServer getInstance() {
+    return getInstance(null);
+  }
+
+  public static UcpServer getInstance(@Nullable Supplier<UcpServer> ucpServerSupplier) {
     if (sInstance != null)
       return sInstance;
     sInstanceLock.lock();
@@ -89,7 +94,11 @@ public class UcpServer {
       if (sInstance != null)
         return sInstance;
       try {
-        sInstance = new UcpServer(null);
+        if (ucpServerSupplier != null) {
+          sInstance = ucpServerSupplier.get();
+        } else {
+          sInstance = new UcpServer(null);
+        }
       } catch (IOException e) {
         throw new RuntimeException(e);
       }
@@ -119,7 +128,6 @@ public class UcpServer {
             LOG.info("Incoming request, clientAddr:{} clientId:{}",
                 connectionRequest.getClientAddress(), connectionRequest.getClientId());
             mConnectionRequests.offer(connectionRequest);
-
           }
         });
     for (InetAddress addr : addressesToBind) {

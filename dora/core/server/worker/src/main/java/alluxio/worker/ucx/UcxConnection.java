@@ -136,26 +136,26 @@ public class UcxConnection implements Closeable {
               ByteBuffer rpcRecvBuffer = UcxUtils.getByteBufferView(
                   recvMemoryBlock.getAddress(), recvMemoryBlock.getLength());
               UcxMessage msg = UcxMessage.fromByteBuffer(rpcRecvBuffer);
-              sRemoteConnections.compute(thisConn, (conn, activeRequestSet) -> {
-                if (activeRequestSet == null) {
-                  return null;
-                }
-                try {
-                  activeRequest.close();
-                } catch (IOException e) {
-                  // actually there won't be checked exception thrown.
-                  LOG.error("Error of closing activeRequest:{}", activeRequest);
-                }
-                activeRequestSet.remove(activeRequest);
-                return activeRequestSet;
-              });
+//              sRemoteConnections.compute(thisConn, (conn, activeRequestSet) -> {
+//                if (activeRequestSet == null) {
+//                  return null;
+//                }
+//                try {
+//                  activeRequest.close();
+//                } catch (IOException e) {
+//                  // actually there won't be checked exception thrown.
+//                  LOG.error("Error of closing activeRequest:{}", activeRequest);
+//                }
+//                activeRequestSet.remove(activeRequest);
+//                return activeRequestSet;
+//              });
               UcxRequestHandler reqHandler = msg.getRPCMessageType().mHandlerSupplier.get();
               msg.getRPCMessageType().mStage.mThreadPool.execute(() -> {
                 try {
                   reqHandler.handle(msg, thisConn);
                 } catch (Throwable ex) {
                   LOG.error("Exception when handling req:{} from remote:{}",
-                      msg, mEndpoint);
+                      msg, mEndpoint, ex);
                 }
               });
             } catch (IOException e) {
@@ -173,13 +173,13 @@ public class UcxConnection implements Closeable {
           }
         });
     activeRequest.setUcpRequest(recvRequest);
-    sRemoteConnections.compute(this, (conn, activeReqQ) -> {
-      if (activeReqQ == null) {
-        activeReqQ = new HashSet<>();
-      }
-      activeReqQ.add(activeRequest);
-      return activeReqQ;
-    });
+//    sRemoteConnections.compute(this, (conn, activeReqQ) -> {
+//      if (activeReqQ == null) {
+//        activeReqQ = new HashSet<>();
+//      }
+//      activeReqQ.add(activeRequest);
+//      return activeReqQ;
+//    });
   }
 
   public static class ActiveRequest implements Closeable {

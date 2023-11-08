@@ -32,10 +32,10 @@ public class UcxConnectionTest {
 
   @BeforeClass
   public static void initContext() {
-//    PropertyConfigurator.configure("/root/github/alluxio/conf/log4j.properties");
-//    Properties props = new Properties();
-//    props.setProperty(PropertyKey.LOGGER_TYPE.toString(), "Console");
-//    System.out.println("start initContext...");
+    PropertyConfigurator.configure("/root/github/alluxio/conf/log4j.properties");
+    Properties props = new Properties();
+    props.setProperty(PropertyKey.LOGGER_TYPE.toString(), "Console");
+    System.out.println("start initContext...");
 
     sGlobalContext = new UcpContext(new UcpParams()
         .requestStreamFeature()

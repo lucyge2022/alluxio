@@ -46,22 +46,22 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
     ByteBuffer infoBuffer = message.getRPCMessage();
     long remoteMemAddress;
     UcpRemoteKey remoteRKey;
-    Protocol.ReadRequest readRequest;
+    Protocol.ReadRequestRMA readRequest;
     try (ByteBufferInputStream bbis = ByteBufferInputStream.getInputStream(infoBuffer)) {
       //  RPC message contains:
       //  client remote mem addr (long) | client remote mem addr Rkey buffer
       //  ReadRequest protobuf
       LOG.info("[DEBUG], before read remote mem info, infobuffer capacity:{}:pos:{}:limit:{}.",
           infoBuffer.capacity(), infoBuffer.position(), infoBuffer.limit());
-      remoteMemAddress = bbis.readLong();
-      int rkeyBufferSize = infoBuffer.getInt();
-      ByteBuffer rkeyBuf = ByteBuffer.allocateDirect(rkeyBufferSize);
-      bbis.read(rkeyBuf, rkeyBufferSize);
+      readRequest = Protocol.ReadRequestRMA.parseFrom(infoBuffer.duplicate());
+      remoteMemAddress = readRequest.getRemoteMemAddr();
+      byte[] rkeyBufBytes = readRequest.getRkeyBuf().toByteArray();
+      ByteBuffer rkeyBuf = ByteBuffer.allocateDirect(rkeyBufBytes.length);
+      rkeyBuf.put(rkeyBufBytes);
       rkeyBuf.clear();
       remoteRKey = remoteEp.unpackRemoteKey(rkeyBuf);
       LOG.info("[DEBUG], after read remote mem info, infobuffer capacity:{}:pos:{}:limit:{}.",
           infoBuffer.capacity(), infoBuffer.position(), infoBuffer.limit());
-      readRequest = Protocol.ReadRequest.parseFrom(infoBuffer.duplicate());
     } catch (IOException e) {
       LOG.error("Exception in parsing RMA Read Request:", e);
       throw new RuntimeException(e);
@@ -91,17 +91,15 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
         }
         Preconditions.checkArgument(readLen == readContentUcpMem.get().getLength(),
             "readLen not equal to supplied UcpMemory length");
-        offset += readLen;
-        bytesRead += readLen;
-        remoteAddrPosition += readLen;
+        LOG.info("PUT-ing to remoteAddr:{}", remoteAddrPosition);
         UcpRequest putRequest = remoteEp.putNonBlocking(readContentUcpMem.get().getAddress(),
             readContentUcpMem.get().getLength(), remoteAddrPosition,
             remoteRKey, new UcxCallback() {
               public void onSuccess(UcpRequest request) {
                 LOG.info("onSuccess put pageid:{}:pageOffset:{}:len:{}",
                     pageId, pageOffset, readLen);
-                asyncFuture.complete(String.format("pageid:%d:pageOffset:%d:len:%d",
-                    pageId, pageOffset, readLen));
+                asyncFuture.complete(String.format("pageid:%s:pageOffset:%d:len:%d",
+                    pageId.toString(), pageOffset, readLen));
               }
 
               public void onError(int ucsStatus, String errorMsg) {
@@ -112,6 +110,9 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
               }
             });
         totalRequests += 1;
+        offset += readLen;
+        bytesRead += readLen;
+        remoteAddrPosition += readLen;
       } catch (PageNotFoundException | IOException e) {
         throw new RuntimeException(e);
       }

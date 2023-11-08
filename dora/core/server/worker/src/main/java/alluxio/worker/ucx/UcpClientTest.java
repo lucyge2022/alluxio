@@ -98,7 +98,7 @@ public class UcpClientTest {
             .build();
     Protocol.ReadRequest.Builder requestBuilder = Protocol.ReadRequest.newBuilder()
         .setOpenUfsBlockOptions(openUfsBlockOptions);
-    UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, requestBuilder);
+    UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, requestBuilder, null);
     reader.acquireServerConn();
     for (int i=0; i<1; i++) {
       long position = i * pageSize + mRandom.nextInt(pageSize);

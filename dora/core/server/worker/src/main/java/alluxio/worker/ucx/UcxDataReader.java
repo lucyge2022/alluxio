@@ -11,6 +11,7 @@ import alluxio.wire.WorkerNetAddress;
 import alluxio.worker.ucx.UcpProxy;
 
 import com.google.common.base.Preconditions;
+import com.google.protobuf.ByteString;
 import io.netty.buffer.ByteBuf;
 import org.openucx.jucx.UcxCallback;
 import org.openucx.jucx.UcxException;
@@ -35,6 +36,7 @@ import java.util.LinkedList;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Supplier;
+import javax.annotation.Nullable;
 
 public class UcxDataReader implements PositionReader {
   private static final Logger LOG = LoggerFactory.getLogger(UcxDataReader.class);
@@ -46,11 +48,12 @@ public class UcxDataReader implements PositionReader {
   UcxConnection mConnection;
   // make this a global, one per process only instance
   UcpWorker mWorker;
-  UcpEndpoint mWorkerEndpoint;
 
   Supplier<Protocol.ReadRequest.Builder> mRequestBuilder;
+  Supplier<Protocol.ReadRequestRMA.Builder> mRequestRMABuilder;
   public UcxDataReader(InetSocketAddress addr, UcpWorker worker,
-                       Protocol.ReadRequest.Builder requestBuilder) {
+                       @Nullable Protocol.ReadRequest.Builder requestBuilder,
+                       @Nullable Protocol.ReadRequestRMA.Builder requestRMABuilder) {
     try {
       sLocalAddr = new InetSocketAddress(InetAddress.getLocalHost(),0);
     } catch (UnknownHostException e) {
@@ -58,7 +61,8 @@ public class UcxDataReader implements PositionReader {
     }
     mAddr = addr;
     mWorker = worker;
-    mRequestBuilder = requestBuilder::clone;
+    mRequestBuilder = requestBuilder != null ? requestBuilder::clone : null;
+    mRequestRMABuilder = requestRMABuilder != null ? requestRMABuilder::clone : null;
   }
 
 
@@ -88,9 +92,14 @@ public class UcxDataReader implements PositionReader {
   @Override
   public int readInternal(long position, ReadTargetBuffer buffer, int length) throws IOException {
     // use Stream API
-//    return readInternalStream(position, buffer, length);
+    if (mRequestBuilder != null) {
+    return readInternalStream(position, buffer, length);
+    }
     // use RMA API
-    return readInternalRMA(position, buffer, length);
+    if (mRequestRMABuilder != null) {
+      return readInternalRMA(position, buffer, length);
+    }
+    return -1;
   }
 
   public int readInternalRMA(long position, ReadTargetBuffer buffer, int length)
@@ -103,26 +112,16 @@ public class UcxDataReader implements PositionReader {
         UcxUtils.getAddress(buffer.byteBuffer()), length);
     // pack to rkey buf
     ByteBuffer rkeyBuf = resultMemBlock.getRemoteKeyBuffer();
-    Protocol.ReadRequest.Builder builder = mRequestBuilder.get()
+    Protocol.ReadRequestRMA.Builder builder = mRequestRMABuilder.get()
         .setLength(length)
         .setOffset(position)
+        .setRemoteMemAddr(resultMemBlock.getAddress())
+        .setRkeyBuf(ByteString.copyFrom(rkeyBuf))
         .clearCancel();
-    Protocol.ReadRequest readRequest = builder.build();
-    byte[] readReqBytes = readRequest.toByteArray();
-    ByteBuffer rpcMesgBuf = ByteBuffer.allocate(
-        Long.BYTES +  // local result mem addr
-        Integer.BYTES +  // length of rkey
-        rkeyBuf.remaining() + // rkey
-        readReqBytes.length); // ReadRequest protobuf content
-    try (ByteBufferOutputStream bbos = ByteBufferOutputStream.getOutputStream(rpcMesgBuf)) {
-      bbos.writeLong(resultMemBlock.getAddress());
-      bbos.writeInt(rkeyBuf.remaining());
-      bbos.write(rkeyBuf, rkeyBuf.remaining());
-      bbos.write(readReqBytes);
-      rpcMesgBuf.clear();
-    }
+    Protocol.ReadRequestRMA readRequest = builder.build();
     UcxMessage readRMAMessage = new UcxMessage(0, UcxMessage.Type.ReadRMARequest,
-        rpcMesgBuf);
+        ByteBuffer.wrap(readRequest.toByteArray()));
+
     UcpMemory ucxMesgMem = UcxMemoryPool.allocateMemory(
         AlluxioUcxUtils.METADATA_SIZE_COMMON,
         UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
@@ -131,7 +130,7 @@ public class UcxDataReader implements PositionReader {
       UcxMessage.toByteBuffer(readRMAMessage, bbos);
     }
     ucxMesgMemBuffer.clear();
-    UcpRequest sendRequest = mWorkerEndpoint.sendTaggedNonBlocking(
+    UcpRequest sendRequest = mConnection.getEndpoint().sendTaggedNonBlocking(
         ucxMesgMemBuffer, mConnection.getTagToSend(), new UcxCallback() {
           public void onSuccess(UcpRequest request) {
             LOG.info("ReadRMARequest:{} sent.", readRequest);
@@ -153,6 +152,7 @@ public class UcxDataReader implements PositionReader {
         UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
     UcpRequest replyReq = mConnection.getEndpoint().recvStreamNonBlocking(relyMemoryBlock.getAddress(),
         relyMemoryBlock.getLength(), 0, null);
+    LOG.info("Waiting for RMA done signal reception...");
     waitForRequest(replyReq);
     relyMemoryBlock.deregister();
     resultMemBlock.deregister(); // now target buffer available for caller to access
@@ -171,7 +171,7 @@ public class UcxDataReader implements PositionReader {
     buf.putInt(serializedBytes.length);
     buf.put(serializedBytes);
     buf.clear();
-    UcpRequest sendRequest = mWorkerEndpoint.sendTaggedNonBlocking(
+    UcpRequest sendRequest = mConnection.getEndpoint().sendTaggedNonBlocking(
         buf, mConnection.getTagToSend(), new UcxCallback() {
       public void onSuccess(UcpRequest request) {
         LOG.info("ReadReq:{} sent.", readRequest);
@@ -191,7 +191,7 @@ public class UcxDataReader implements PositionReader {
     preamble.clear();
     LinkedList<UcpRequest> dataUcpRecvReqs = new LinkedList<>();
     while (bytesRead < length) {
-      UcpRequest recvReq = mWorkerEndpoint.recvStreamNonBlocking(UcxUtils.getAddress(preamble), 16,
+      UcpRequest recvReq = mConnection.getEndpoint().recvStreamNonBlocking(UcxUtils.getAddress(preamble), 16,
           UcpConstants.UCP_STREAM_RECV_FLAG_WAITALL, new UcxCallback() {
             public void onSuccess(UcpRequest request) {}
 
@@ -214,7 +214,7 @@ public class UcxDataReader implements PositionReader {
       sizes[0] = 8;
       sizes[1] = size;
       LOG.info("preamble info:seq:{}:len:{}", seq, size);
-      UcpRequest dataRecvReq = mWorkerEndpoint.recvStreamNonBlocking(addrs, sizes,
+      UcpRequest dataRecvReq = mConnection.getEndpoint().recvStreamNonBlocking(addrs, sizes,
           UcpConstants.UCP_STREAM_RECV_FLAG_WAITALL, new UcxCallback() {
             public void onSuccess(UcpRequest request) {
               ByteBuffer seqBufView = UcxUtils.getByteBufferView(addrs[0], sizes[0]);

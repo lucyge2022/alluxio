@@ -1,4 +1,4 @@
-package alluxio.ucx;
+package alluxio.worker.ucx;
 
 import alluxio.AlluxioURI;
 import alluxio.client.file.CacheContext;
@@ -27,14 +27,18 @@ import alluxio.proto.dataserver.Protocol;
 
 import com.google.common.collect.ImmutableList;
 import org.apache.commons.codec.binary.Hex;
+import org.apache.log4j.PropertyConfigurator;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.openucx.jucx.ucp.UcpWorker;
 import org.openucx.jucx.ucp.UcpWorkerParams;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -43,24 +47,34 @@ import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.Properties;
 import java.util.Random;
 import java.util.function.Supplier;
 
 public class UcxReadTest {
+  private static Logger LOG = LoggerFactory.getLogger(UcxReadTest.class);
 
   public int serverPort = 1234;
   public String serverHost = "localhost";
-  public UcpServer mServer;
+  public static UcpServer mServer;
 //  public UcpContext mContext;
-  public LocalCacheManager mLocalCacheManager;
+  public static LocalCacheManager mLocalCacheManager;
   private Random mRandom = new Random();
-  private InstancedConfiguration mConf = Configuration.copyGlobal();
-  @Rule
-  public TemporaryFolder mTemp = new TemporaryFolder();
-  public UcpWorker mWorker;
+  private static InstancedConfiguration mConf = Configuration.copyGlobal();
+  @ClassRule
+  public static TemporaryFolder mTemp = new TemporaryFolder();
+  public static UcpWorker mWorker;
 
-  @Before
-  public void before() throws Exception {
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    System.out.println("start beforeClass...");
+//    PropertyConfigurator.configure("/root/github/alluxio/conf/lucy-log4j2.xml");
+    Properties props = new Properties();
+//    System.setProperty("myProperty", "lucy.log");
+    props.setProperty(PropertyKey.LOGGER_TYPE.toString(), "Console");
+//    props.setProperty(PropertyKey.CONF_DIR.toString(), "/root/github/alluxio/conf/");
+//    props.setProperty(PropertyKey.LOGS_DIR.toString(), "/root/github/alluxio/logs/");
+
     mConf.set(PropertyKey.USER_CLIENT_CACHE_DIRS, mTemp.getRoot().getAbsolutePath());
     mConf.set(PropertyKey.USER_CLIENT_CACHE_STORE_TYPE, PageStoreType.LOCAL);
     CacheManagerOptions cacheManagerOptions = CacheManagerOptions.create(mConf);
@@ -74,7 +88,13 @@ public class UcxReadTest {
     CommonUtils.waitFor("restore completed",
         () -> mLocalCacheManager.state() == CacheManager.State.READ_WRITE,
         WaitForOptions.defaults().setTimeoutMs(10000));
-    mServer = new UcpServer(mLocalCacheManager);
+    mServer = UcpServer.getInstance(() -> {
+      try {
+        return new UcpServer(mLocalCacheManager);
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
+    });
     mWorker = UcpServer.sGlobalContext.newWorker(new UcpWorkerParams());
   }
 
@@ -108,7 +128,7 @@ public class UcxReadTest {
     Supplier<byte[]> externalDataSupplier = () -> {
       return sampleData.mData;
     };
-    int totalLen = 5 * pageSize;
+    int totalLen = 1 * pageSize;
     int totalPages = totalLen / pageSize;
     for (int i=0; i<totalPages; i++) {
       PageId pageId = new PageId(new AlluxioURI(dummyUfsPath).hash(), i);
@@ -123,12 +143,12 @@ public class UcxReadTest {
             .setMountId(0)
             .build();
 
-    Protocol.ReadRequest.Builder requestBuilder = Protocol.ReadRequest.newBuilder()
+    Protocol.ReadRequestRMA.Builder requestBuilder = Protocol.ReadRequestRMA.newBuilder()
         .setOpenUfsBlockOptions(openUfsBlockOptions);
-    UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, requestBuilder);
+    UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, null, requestBuilder);
     reader.acquireServerConn();
     for (int i=0; i<totalPages; i++) {
-      long position = i * pageSize + mRandom.nextInt(pageSize);
+      long position = i * pageSize;// + mRandom.nextInt(pageSize);
       int length = pageSize;
       ByteBuffer buffer = ByteBuffer.allocateDirect(length);
       System.out.println(String.format("reading position:%s:length:%s", position, length));

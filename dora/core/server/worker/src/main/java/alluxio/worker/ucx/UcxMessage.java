@@ -46,6 +46,7 @@ public class UcxMessage {
       // replace with getting one from memory pool
       ByteBuffer rpcMessage = ByteBuffer.allocateDirect(rpcMesgLength);
       bbis.read(rpcMessage, rpcMesgLength);
+      rpcMessage.clear();
       UcxMessage ucxMessage = new UcxMessage(msgId, rpcMessageType, rpcMessage);
       return ucxMessage;
     }
@@ -56,6 +57,7 @@ public class UcxMessage {
     bbos.writeLong(message.mMessageId);
     bbos.writeInt(message.mRPCMessageType.ordinal());
     int rpcMsgLen = message.getRPCMessage() != null ? message.getRPCMessage().remaining() : 0;
+    bbos.writeInt(rpcMsgLen);
     if (rpcMsgLen > 0) {
       bbos.write(message.getRPCMessage(), rpcMsgLen);
     }
