@@ -341,6 +341,10 @@ public class UcxConnection implements Closeable {
     return newConnection;
   }
 
+  public boolean isClosed() {
+    return mClosed.get();
+  }
+
   public void close() {
     if (!mClosed.compareAndSet(false, true)) {
       LOG.warn("UcxConnection:{} already closed.", this);

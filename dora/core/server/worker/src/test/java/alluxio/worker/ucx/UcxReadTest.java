@@ -25,7 +25,9 @@ import alluxio.worker.ucx.UcxDataReader;
 import alluxio.conf.Configuration;
 import alluxio.proto.dataserver.Protocol;
 
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableList;
+import com.google.protobuf.GeneratedMessageV3;
 import org.apache.commons.codec.binary.Hex;
 import org.apache.log4j.PropertyConfigurator;
 import org.junit.Assert;
@@ -35,6 +37,8 @@ import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.openucx.jucx.ucp.UcpContext;
+import org.openucx.jucx.ucp.UcpParams;
 import org.openucx.jucx.ucp.UcpWorker;
 import org.openucx.jucx.ucp.UcpWorkerParams;
 import org.slf4j.Logger;
@@ -49,21 +53,20 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Properties;
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 public class UcxReadTest {
   private static Logger LOG = LoggerFactory.getLogger(UcxReadTest.class);
-
-  public int serverPort = 1234;
-  public String serverHost = "localhost";
+  
   public static UcpServer mServer;
 //  public UcpContext mContext;
   public static LocalCacheManager mLocalCacheManager;
   private Random mRandom = new Random();
   private static InstancedConfiguration mConf = Configuration.copyGlobal();
+  private static long sPageSize;
   @ClassRule
   public static TemporaryFolder mTemp = new TemporaryFolder();
-  public static UcpWorker mWorker;
 
   @BeforeClass
   public static void beforeClass() throws Exception {
@@ -77,6 +80,7 @@ public class UcxReadTest {
 
     mConf.set(PropertyKey.USER_CLIENT_CACHE_DIRS, mTemp.getRoot().getAbsolutePath());
     mConf.set(PropertyKey.USER_CLIENT_CACHE_STORE_TYPE, PageStoreType.LOCAL);
+    sPageSize = mConf.getBytes(PropertyKey.USER_CLIENT_CACHE_PAGE_SIZE);
     CacheManagerOptions cacheManagerOptions = CacheManagerOptions.create(mConf);
     PageStoreOptions pageStoreOptions = PageStoreOptions.create(mConf).get(0);
     PageStore pageStore = PageStore.create(pageStoreOptions);
@@ -95,7 +99,6 @@ public class UcxReadTest {
         throw new RuntimeException(e);
       }
     });
-    mWorker = UcpServer.sGlobalContext.newWorker(new UcpWorkerParams());
   }
 
   class SampleData {
@@ -119,42 +122,62 @@ public class UcxReadTest {
     return bytes;
   }
 
+  public void prefill(String ufsPath, int numOfPages, SampleData sampleData) {
+    Supplier<byte[]> externalDataSupplier = () -> {
+      return sampleData.mData;
+    };
+    int totalPages = numOfPages;
+    for (int i=0; i<totalPages; i++) {
+      PageId pageId = new PageId(new AlluxioURI(ufsPath).hash(), i);
+      mLocalCacheManager.cache(pageId, CacheContext.defaults(), externalDataSupplier);
+    }
+  }
+
 
   @Test
   public void testClientServer() throws Exception {
     String dummyUfsPath = "hdfs://localhost:9000/randomUfsPath";
-    int pageSize = 1024 * 1024;
     SampleData sampleData = new SampleData(generateRandomData(1024 * 1024));
-    Supplier<byte[]> externalDataSupplier = () -> {
-      return sampleData.mData;
-    };
-    int totalLen = 1 * pageSize;
-    int totalPages = totalLen / pageSize;
-    for (int i=0; i<totalPages; i++) {
-      PageId pageId = new PageId(new AlluxioURI(dummyUfsPath).hash(), i);
-      mLocalCacheManager.cache(pageId, CacheContext.defaults(), externalDataSupplier);
-    }
+    int numOfPages = 5;
+    prefill(dummyUfsPath, numOfPages, sampleData);
     InetSocketAddress serverAddr = new InetSocketAddress(
+//        "172.31.21.70", UcpServer.BIND_PORT);
         InetAddress.getLocalHost(), UcpServer.BIND_PORT);
+//    System.out.println("Connecting to " + serverAddr.toString());
     Protocol.OpenUfsBlockOptions openUfsBlockOptions =
         Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(dummyUfsPath)
-            .setOffsetInFile(0).setBlockSize(totalLen)
+            .setOffsetInFile(0).setBlockSize(numOfPages * sPageSize)
             .setNoCache(true)
             .setMountId(0)
             .build();
 
-    Protocol.ReadRequestRMA.Builder requestBuilder = Protocol.ReadRequestRMA.newBuilder()
+    UcpContext ucpContext = new UcpContext(new UcpParams()
+        .requestStreamFeature()
+        .requestTagFeature()
+        .requestRmaFeature()
+        .requestWakeupFeature());
+    UcpWorker worker = ucpContext.newWorker(new UcpWorkerParams()
+        .requestWakeupRMA()
+        .requestThreadSafety());
+
+    int iteration = 1000;
+    Protocol.ReadRequestRMA.Builder requestRMABuilder = Protocol.ReadRequestRMA.newBuilder()
         .setOpenUfsBlockOptions(openUfsBlockOptions);
-    UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, null, requestBuilder);
-    reader.acquireServerConn();
-    for (int i=0; i<totalPages; i++) {
-      long position = i * pageSize;// + mRandom.nextInt(pageSize);
-      int length = pageSize;
-      ByteBuffer buffer = ByteBuffer.allocateDirect(length);
-      System.out.println(String.format("reading position:%s:length:%s", position, length));
-      try {
-        reader.read(position, buffer, length);
-        buffer.clear();
+    Protocol.ReadRequest.Builder requestBuilder = Protocol.ReadRequest.newBuilder()
+        .setOpenUfsBlockOptions(openUfsBlockOptions);
+    UcxDataReader reader = new UcxDataReader(serverAddr, worker, null, requestRMABuilder);
+    Stopwatch stopwatch = Stopwatch.createStarted();
+    for (int iter =0;iter<iteration;iter++) {
+      System.out.println(String.format("iteration:%d", iter));
+      reader.acquireServerConn();
+      for (int i = 0; i < numOfPages; i++) {
+        long position = i * sPageSize;// + mRandom.nextInt(pageSize);
+        int length = (int)sPageSize;
+        ByteBuffer buffer = ByteBuffer.allocateDirect(length);
+        System.out.println(String.format("reading position:%s:length:%s", position, length));
+        try {
+          reader.read(position, buffer, length);
+//        buffer.clear();
         System.out.println("buffer:" + buffer.toString());
         byte[] readContent = new byte[length];
         buffer.get(readContent);
@@ -168,11 +191,16 @@ public class UcxReadTest {
         }
         System.out.println(String.format("readContentMd5:%s:sample data md5:%s",
             readContentMd5, sampleData.mMd5));
-        Assert.assertTrue(Arrays.equals(readContent, sampleData.mData));
-      } catch (IOException e) {
-        System.out.println("IOException on position:" + position + ":length:" + length);
-        throw new RuntimeException(e);
+          Assert.assertEquals("md5 not equal", sampleData.mMd5, readContentMd5);
+//        Assert.assertTrue(Arrays.equals(readContent, sampleData.mData));
+        } catch (IOException e) {
+          System.out.println("IOException on position:" + position + ":length:" + length);
+          throw new RuntimeException(e);
+        }
       }
     }
+    long elapsedInMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
+    System.out.println(String.format("Total %d iteratons done, time taken in ms:%d",
+        iteration, elapsedInMs));
   }
 }

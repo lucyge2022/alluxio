@@ -119,7 +119,8 @@ public class UcpServer {
       mlocalCacheManager = localCacheManager;
     }
     mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams()
-            .requestWakeupRMA());
+        .requestWakeupRMA()
+        .requestThreadSafety());
     List<InetAddress> addressesToBind = getAllAddresses();
     UcpListenerParams listenerParams = new UcpListenerParams()
         .setConnectionHandler(new UcpListenerConnectionHandler() {

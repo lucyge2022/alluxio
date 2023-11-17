@@ -148,11 +148,13 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
         replyBuffer, new UcxCallback() {
       public void onSuccess(UcpRequest request) {
         LOG.error("onSuccess");
+        relyMemoryBlock.deregister();
         completed.complete(true);
       }
 
       public void onError(int ucsStatus, String errorMsg) {
         completed.complete(false);
+        relyMemoryBlock.deregister();
         throw new UcxException(errorMsg);
       }
     });
@@ -161,7 +163,7 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
     try {
       completeSending = completed.get();
       if (!completeSending) {
-        throw new UnknownRuntimeException(String.format("Error sending compeletion reply after handling ucxmsg:%s",
+        throw new UnknownRuntimeException(String.format("Error sending completion reply after handling ucxmsg:%s",
             message));
       }
     } catch (InterruptedException | ExecutionException e) {

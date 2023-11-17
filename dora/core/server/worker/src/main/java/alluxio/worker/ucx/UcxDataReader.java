@@ -35,6 +35,7 @@ import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 
@@ -46,6 +47,7 @@ public class UcxDataReader implements PositionReader {
   private static InetSocketAddress sLocalAddr = null;
 
   UcxConnection mConnection;
+  private ReentrantLock acquireConnLock = new ReentrantLock();
   // make this a global, one per process only instance
   UcpWorker mWorker;
 
@@ -67,11 +69,18 @@ public class UcxDataReader implements PositionReader {
 
 
   public void acquireServerConn() throws IOException {
-    try {
-      mConnection = UcxConnection.initNewConnection(mAddr, mWorker);
-    } catch (Exception e) {
-      throw new IOException(
-          String.format("Error initializing conn with remote:%s", mAddr), e);
+    if (mConnection == null || mConnection.isClosed()) {
+      try {
+        acquireConnLock.lock();
+        if (mConnection == null || mConnection.isClosed()) {
+          mConnection = UcxConnection.initNewConnection(mAddr, mWorker);
+        }
+      } catch (Exception e) {
+        throw new IOException(
+            String.format("Error initializing conn with remote:%s", mAddr), e);
+      } finally {
+        acquireConnLock.unlock();
+      }
     }
   }
 
@@ -166,18 +175,25 @@ public class UcxDataReader implements PositionReader {
         .setOffset(position)
         .clearCancel();
     Protocol.ReadRequest readRequest = builder.build();
-    byte[] serializedBytes = readRequest.toByteArray();
-    ByteBuffer buf = ByteBuffer.allocateDirect(PAGE_SIZE);
-    buf.putInt(serializedBytes.length);
-    buf.put(serializedBytes);
-    buf.clear();
+    UcxMessage readMessage = new UcxMessage(0, UcxMessage.Type.ReadRequest,
+        ByteBuffer.wrap(readRequest.toByteArray()));
+    UcpMemory ucxMesgMem = UcxMemoryPool.allocateMemory(
+        AlluxioUcxUtils.METADATA_SIZE_COMMON,
+        UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
+    ByteBuffer ucxMesgMemBuffer = UcxUtils.getByteBufferView(ucxMesgMem.getAddress(), ucxMesgMem.getLength());
+    try (ByteBufferOutputStream bbos = ByteBufferOutputStream.getOutputStream(ucxMesgMemBuffer)) {
+      UcxMessage.toByteBuffer(readMessage, bbos);
+    }
+    ucxMesgMemBuffer.clear();
     UcpRequest sendRequest = mConnection.getEndpoint().sendTaggedNonBlocking(
-        buf, mConnection.getTagToSend(), new UcxCallback() {
+        ucxMesgMemBuffer, mConnection.getTagToSend(), new UcxCallback() {
       public void onSuccess(UcpRequest request) {
         LOG.info("ReadReq:{} sent.", readRequest);
+        ucxMesgMem.deregister();
       }
 
       public void onError(int ucsStatus, String errorMsg) {
+        ucxMesgMem.deregister();
         throw new UcxException(errorMsg);
       }
     });
