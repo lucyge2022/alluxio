@@ -212,12 +212,23 @@ public class LocalPageStore implements PageStore {
         .requestTagFeature()
         .requestWakeupFeature());
   public UcpMemory get(PageId pageId, boolean isTemporary,
-                       int pageOffset, int bytesToRead) throws IOException {
-    Path filePath = getPagePath(pageId, isTemporary);
-    FileChannel fileChannel = FileChannel.open(filePath, READ);
+                       int pageOffset, int bytesToRead)
+      throws IOException, PageNotFoundException {
+    Preconditions.checkArgument(pageOffset >= 0,
+        "page offset should be non-negative");
+    Path pagePath = getPagePath(pageId, isTemporary);
+    File pageFile = pagePath.toFile();
+    if (!pageFile.exists()) {
+      throw new PageNotFoundException(pagePath.toString());
+    }
+    FileChannel fileChannel = FileChannel.open(pagePath, READ);
     LOG.error("open fc for:{}:pageOffset:{}:bytesToRead:{}",
-        filePath, pageOffset, bytesToRead);
-    // set mem pool here
+        pagePath, pageOffset, bytesToRead);
+    long fileLength = pageFile.length();
+    if (pageOffset + bytesToRead > fileLength) {
+      bytesToRead = (int) (fileLength - (long) pageOffset);
+    }
+    // TODO set mem pool here
     MappedByteBuffer buf = fileChannel.map(FileChannel.MapMode.READ_ONLY,
         pageOffset, bytesToRead);
     UcpMemory mmapedMemory = sGlobalContext.memoryMap(new UcpMemMapParams()

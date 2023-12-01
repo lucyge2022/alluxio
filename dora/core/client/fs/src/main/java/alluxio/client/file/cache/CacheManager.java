@@ -23,6 +23,7 @@ import alluxio.network.protocol.databuffer.DataFileChannel;
 import alluxio.resource.LockResource;
 
 import com.codahale.metrics.Counter;
+import org.openucx.jucx.ucp.UcpMemory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -306,6 +307,10 @@ public interface CacheManager extends AutoCloseable, CacheStatus {
   int getAndLoad(PageId pageId, int pageOffset, int bytesToRead,
       ReadTargetBuffer buffer, CacheContext cacheContext, Supplier<byte[]> externalDataSupplier);
 
+  default int cache(PageId pageId, CacheContext cacheContext, Supplier<byte[]> externalDataSupplier) {
+    throw new UnsupportedOperationException();
+  }
+
   /**
    * Get page ids by the given file id.
    * @param fileId file identifier
@@ -381,4 +386,9 @@ public interface CacheManager extends AutoCloseable, CacheStatus {
   Optional<DataFileChannel> getDataFileChannel(
       PageId pageId, int pageOffset, int bytesToRead, CacheContext cacheContext)
       throws PageNotFoundException;
+
+  default Optional<UcpMemory> getUcpMemory(PageId pageId, int pageOffset, int bytesToRead)
+      throws PageNotFoundException, IOException {
+    throw new UnsupportedOperationException();
+  }
 }

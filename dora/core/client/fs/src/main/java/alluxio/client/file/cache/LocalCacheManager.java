@@ -584,7 +584,8 @@ public class LocalCacheManager implements CacheManager {
     return get(pageId, pageOffset, (int) pageSize, buffer, cacheContext);
   }
 
-  public Optional<UcpMemory> get(PageId pageId, int pageOffset, int bytesToRead)
+  @Override
+  public Optional<UcpMemory> getUcpMemory(PageId pageId, int pageOffset, int bytesToRead)
       throws PageNotFoundException, IOException {
     if (mState.get() == NOT_IN_USE) {
       Metrics.GET_NOT_READY_ERRORS.inc();

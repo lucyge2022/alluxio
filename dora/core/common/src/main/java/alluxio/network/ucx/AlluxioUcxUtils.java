@@ -1,4 +1,4 @@
-package alluxio.ucx;
+package alluxio.network.ucx;
 
 import org.openucx.jucx.ucp.UcpWorker;
 

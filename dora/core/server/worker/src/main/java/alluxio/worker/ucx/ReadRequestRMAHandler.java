@@ -8,7 +8,7 @@ import alluxio.conf.PropertyKey;
 import alluxio.exception.PageNotFoundException;
 import alluxio.exception.runtime.UnknownRuntimeException;
 import alluxio.proto.dataserver.Protocol;
-import alluxio.ucx.AlluxioUcxUtils;
+import alluxio.network.ucx.AlluxioUcxUtils;
 import alluxio.util.io.ByteBufferInputStream;
 import alluxio.util.io.ByteBufferOutputStream;
 
@@ -30,8 +30,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class ReadRequestRMAHandler implements UcxRequestHandler {
   private static final Logger LOG = LoggerFactory.getLogger(ReadRequestRMAHandler.class);
@@ -85,12 +83,10 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
       PageId pageId = new PageId(fileId, pageIndex);
       try {
         Optional<UcpMemory> readContentUcpMem =
-            UcpServer.getInstance().mlocalCacheManager.get(pageId, pageOffset, readLen);
+            UcpServer.getInstance().mCacheManager.getUcpMemory(pageId, pageOffset, readLen);
         if (!readContentUcpMem.isPresent()) {
           break;
         }
-        Preconditions.checkArgument(readLen == readContentUcpMem.get().getLength(),
-            "readLen not equal to supplied UcpMemory length");
         LOG.info("PUT-ing to remoteAddr:{}", remoteAddrPosition);
         UcpRequest putRequest = remoteEp.putNonBlocking(readContentUcpMem.get().getAddress(),
             readContentUcpMem.get().getLength(), remoteAddrPosition,
@@ -113,8 +109,14 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
         offset += readLen;
         bytesRead += readLen;
         remoteAddrPosition += readLen;
-      } catch (PageNotFoundException | IOException e) {
-        throw new RuntimeException(e);
+        if (readLen < readContentUcpMem.get().getLength()) {
+          LOG.warn("Read requested length not fulfilled, readlen:{}, bytesRead:{}",
+              totalLength, bytesRead);
+          break;
+        }
+      } catch (PageNotFoundException | IOException ex) {
+        LOG.error("Page not found for pageId:{}", pageId);
+        break;
       }
     } // end for
     LOG.info("Handle RMA read req:{} complete, blockingly wait for all RMA PUT to compelte",

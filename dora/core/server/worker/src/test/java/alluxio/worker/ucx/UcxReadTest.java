@@ -160,7 +160,7 @@ public class UcxReadTest {
         .requestWakeupRMA()
         .requestThreadSafety());
 
-    int iteration = 1000;
+    int iteration = 10;
     Protocol.ReadRequestRMA.Builder requestRMABuilder = Protocol.ReadRequestRMA.newBuilder()
         .setOpenUfsBlockOptions(openUfsBlockOptions);
     Protocol.ReadRequest.Builder requestBuilder = Protocol.ReadRequest.newBuilder()

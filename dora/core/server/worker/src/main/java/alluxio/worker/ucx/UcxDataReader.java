@@ -1,25 +1,17 @@
 package alluxio.worker.ucx;
 
 import alluxio.PositionReader;
-import alluxio.file.ByteBufferTargetBuffer;
 import alluxio.file.ReadTargetBuffer;
 import alluxio.proto.dataserver.Protocol;
-import alluxio.ucx.AlluxioUcxUtils;
+import alluxio.network.ucx.AlluxioUcxUtils;
 import alluxio.util.io.ByteBufferOutputStream;
-import alluxio.worker.ucx.UcxConnection;
-import alluxio.wire.WorkerNetAddress;
-import alluxio.worker.ucx.UcpProxy;
 
 import com.google.common.base.Preconditions;
 import com.google.protobuf.ByteString;
-import io.netty.buffer.ByteBuf;
 import org.openucx.jucx.UcxCallback;
 import org.openucx.jucx.UcxException;
 import org.openucx.jucx.UcxUtils;
 import org.openucx.jucx.ucp.UcpConstants;
-import org.openucx.jucx.ucp.UcpEndpoint;
-import org.openucx.jucx.ucp.UcpEndpointParams;
-import org.openucx.jucx.ucp.UcpMemMapParams;
 import org.openucx.jucx.ucp.UcpMemory;
 import org.openucx.jucx.ucp.UcpRequest;
 import org.openucx.jucx.ucp.UcpWorker;
@@ -67,11 +59,11 @@ public class UcxDataReader implements PositionReader {
     mRequestRMABuilder = requestRMABuilder != null ? requestRMABuilder::clone : null;
   }
 
-
   public void acquireServerConn() throws IOException {
     if (mConnection == null || mConnection.isClosed()) {
       try {
         acquireConnLock.lock();
+        LOG.info("Connecting to : {}", mAddr);
         if (mConnection == null || mConnection.isClosed()) {
           mConnection = UcxConnection.initNewConnection(mAddr, mWorker);
         }
@@ -102,7 +94,7 @@ public class UcxDataReader implements PositionReader {
   public int readInternal(long position, ReadTargetBuffer buffer, int length) throws IOException {
     // use Stream API
     if (mRequestBuilder != null) {
-    return readInternalStream(position, buffer, length);
+      return readInternalStream(position, buffer, length);
     }
     // use RMA API
     if (mRequestRMABuilder != null) {
@@ -155,7 +147,6 @@ public class UcxDataReader implements PositionReader {
     waitForRequest(sendRequest);
 
     // read with RMA
-    int bytesRead = 0;
     UcpMemory relyMemoryBlock = UcxMemoryPool.allocateMemory(
         AlluxioUcxUtils.METADATA_SIZE_COMMON,
         UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
@@ -163,9 +154,13 @@ public class UcxDataReader implements PositionReader {
         relyMemoryBlock.getLength(), 0, null);
     LOG.info("Waiting for RMA done signal reception...");
     waitForRequest(replyReq);
+    UcxMessage replyMessage = UcxMessage.fromByteBuffer(UcxUtils.getByteBufferView(
+        relyMemoryBlock.getAddress(), relyMemoryBlock.getLength()));
+    Protocol.ReadResponseRMA rmaReadResponse = Protocol.ReadResponseRMA.parseFrom(
+        replyMessage.getRPCMessage());
     relyMemoryBlock.deregister();
     resultMemBlock.deregister(); // now target buffer available for caller to access
-    return 0;
+    return (int)rmaReadResponse.getReadLength();
   }
 
   public int readInternalStream(long position, ReadTargetBuffer buffer, int length)
@@ -265,5 +260,12 @@ public class UcxDataReader implements PositionReader {
       buffer.byteBuffer().put(entry.getValue());
     }
     return 0;
+  }
+
+  @Override
+  public void close() {
+    if (mConnection != null) {
+      mConnection.close();
+    }
   }
 }

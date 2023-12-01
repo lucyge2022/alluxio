@@ -1,11 +1,10 @@
 package alluxio.worker.ucx;
 
-import alluxio.ucx.AlluxioUcxUtils;
+import alluxio.network.ucx.AlluxioUcxUtils;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
-import io.netty.buffer.ByteBuf;
 import org.openucx.jucx.UcxCallback;
 import org.openucx.jucx.UcxException;
 import org.openucx.jucx.UcxUtils;
@@ -13,7 +12,6 @@ import org.openucx.jucx.ucp.UcpConstants;
 import org.openucx.jucx.ucp.UcpEndpoint;
 import org.openucx.jucx.ucp.UcpEndpointErrorHandler;
 import org.openucx.jucx.ucp.UcpEndpointParams;
-import org.openucx.jucx.ucp.UcpMemMapParams;
 import org.openucx.jucx.ucp.UcpMemory;
 import org.openucx.jucx.ucp.UcpRequest;
 import org.openucx.jucx.ucp.UcpWorker;
@@ -25,11 +23,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
