@@ -42,11 +42,6 @@ public interface PageStore extends AutoCloseable {
    * @return a PageStore instance
    */
   static PageStore create(PageStoreOptions options) {
-    try {
-      throw new Exception("LUCY!");
-    } catch(Exception ex) {
-      LOG.error("DEBUG LUCY:", ex);
-    }
     LOG.info("Opening PageStore with option={}", options.toString());
     final PageStore pageStore;
     switch (options.getType()) {

@@ -101,6 +101,10 @@ public final class WorkerBenchParameters extends FileSystemParameters {
       description = "Worker host")
   public String mWorkerHost = "127.0.0.1";
 
+  @Parameter(names = {"--ucp-server-addr"},
+      description = "")
+  public String mUcpHost = "127.0.0.1";
+
   @Parameter(names = {"--ucp-port"},
       description = "Ucp Server port")
   public int mUcpPort = 1234;

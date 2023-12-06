@@ -63,7 +63,7 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
       PageId pageId = new PageId(fileId, pageIndex);
       try {
         Optional<UcpMemory> readContentUcpMem =
-            UcpServer.getInstance().mlocalCacheManager.get(pageId, pageOffset, readLen);
+            UcpServer.getInstance().mCacheManager.getUcpMemory(pageId, pageOffset, readLen);
         if (!readContentUcpMem.isPresent()) {
           break;
         }

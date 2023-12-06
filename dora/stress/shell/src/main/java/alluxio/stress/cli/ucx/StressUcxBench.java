@@ -53,7 +53,7 @@ public class StressUcxBench extends StressWorkerBench {
       new SamplingLogger(LoggerFactory.getLogger(StressUcxBench.class),
           10L * Constants.SECOND_MS);
   private String[] mFilePaths;
-  private BlockWorkerInfo mTargetWorker;
+  private InetSocketAddress mUcpServerAddr;
   private final long mFileSize = 1024 * 1024l;
 
   public StressUcxBench () {
@@ -65,42 +65,44 @@ public class StressUcxBench extends StressWorkerBench {
     return null;
   }
 
+  public static void main(String[] args) {
+    mainInternal(args, new StressUcxBench());
+  }
+
   @Override
   public void prepare() throws Exception {
     // cache pages on cachemanager
     int numOfFiles = mParameters.mThreads;
     mFilePaths = new String[numOfFiles];
-    List<BlockWorkerInfo> liveWorkers = mFsContext.getLiveWorkers();
-    if (liveWorkers.isEmpty()) {
-      throw new Exception("No live workers found!!");
+    mUcpServerAddr = new InetSocketAddress(mParameters.mUcpHost, mParameters.mUcpPort);
+    LOG.info("Use {} as target ucp server", mUcpServerAddr);
+    for (int i = 0; i < numOfFiles; i++) {
+        mFilePaths[i] = String.format("%s%d", mParameters.mBasePath, i+1);
     }
-    mTargetWorker = liveWorkers.get(0);
-    LOG.info("Use {} as target worker", mTargetWorker);
-    try (CloseableResource<BlockWorkerClient> workerClient =
-             mFsContext.acquireBlockWorkerClient(liveWorkers.get(0).getNetAddress())) {
-      LoadFileRequest.Builder loadFileReqBuilder = LoadFileRequest.newBuilder();
-      for (int i = 0; i < numOfFiles; i++) {
-        mFilePaths[i] = String.format("%s-%d", mParameters.mBasePath, i);
-        loadFileReqBuilder.addUfsStatus(
-            new UfsFileStatus(mFilePaths[i], "", mFileSize,
-                (Long) 1234L, "lucyge", "staff",
-                (short) 0, 4096L).toProto());
-        loadFileReqBuilder.setOptions(UfsReadOptions.newBuilder().build());
-      }
-      ListenableFuture<LoadFileResponse> respFut = workerClient.get().loadFile(loadFileReqBuilder.build());
-      LoadFileResponse resp = respFut.get();
-      LOG.info("Load file resp:{}", resp);
-    }
+//    try (CloseableResource<BlockWorkerClient> workerClient =
+//             mFsContext.acquireBlockWorkerClient(liveWorkers.get(0).getNetAddress())) {
+//      LoadFileRequest.Builder loadFileReqBuilder = LoadFileRequest.newBuilder();
+//      for (int i = 0; i < numOfFiles; i++) {
+//        mFilePaths[i] = String.format("%s-%d", mParameters.mBasePath, i);
+//        loadFileReqBuilder.addUfsStatus(
+//            new UfsFileStatus(mFilePaths[i], "", mFileSize,
+//                (Long) 1234L, "lucyge", "staff",
+//                (short) 0, 4096L).toProto());
+//        loadFileReqBuilder.setOptions(UfsReadOptions.newBuilder().build());
+//      }
+//      ListenableFuture<LoadFileResponse> respFut = workerClient.get().loadFile(loadFileReqBuilder.build());
+//      LoadFileResponse resp = respFut.get();
+//      LOG.info("Load file resp:{}", resp);
+//    }
+  }
+
+  @Override
+  public void validateParams() throws Exception {
+    LOG.info("No op in validateParams");
   }
 
   @Override
   public WorkerBenchTaskResult runLocal() throws Exception {
-    Preconditions.checkArgument(mBaseParameters.mStartMs >= 0,
-        "startMs was not specified correctly!");
-    Preconditions.checkArgument(mBaseParameters.mClusterLimit > 0,
-        "clusterLimit was not specified correctly!");
-    LOG.info("Worker ID is {}, index is {}", mBaseParameters.mId, mBaseParameters.mIndex);
-    LOG.info("This test will use {} workers in the cluster", mBaseParameters.mClusterLimit);
     // If running in this one process, do all the work
     // Otherwise, calculate its own part and only do that
     int startFileIndex = 0;
@@ -114,6 +116,10 @@ public class StressUcxBench extends StressWorkerBench {
     long durationMs = FormatUtils.parseTimeSize(mParameters.mDuration);
     long warmupMs = FormatUtils.parseTimeSize(mParameters.mWarmup);
     long startMs = mBaseParameters.mStartMs;
+    if (startMs <= 0) {
+      // automatically sets it to be 30sec later
+      startMs = CommonUtils.getCurrentMs() + 10 * 1000;
+    }
     long endMs = startMs + warmupMs + durationMs;
     String datePattern = alluxio.conf.Configuration.global()
         .getString(PropertyKey.USER_DATE_FORMAT_PATTERN);
@@ -134,6 +140,7 @@ public class StressUcxBench extends StressWorkerBench {
     service.invokeAll(callables, FormatUtils.parseTimeSize(mBaseParameters.mBenchTimeout),
         TimeUnit.MILLISECONDS);
 
+    Thread.sleep(20000);
     service.shutdownNow();
     service.awaitTermination(30, TimeUnit.SECONDS);
     return context.getResult();
@@ -160,6 +167,7 @@ public class StressUcxBench extends StressWorkerBench {
     }
 
     public synchronized void mergeThreadResult(WorkerBenchTaskResult threadResult) {
+      LOG.info("Merging result:{}", threadResult);
       if (mResult == null) {
         mResult = new WorkerBenchTaskResult();
       }
@@ -212,7 +220,9 @@ public class StressUcxBench extends StressWorkerBench {
     @Override
     public Void call() {
       try {
+        LOG.info("before runInternal");
         runInternal();
+        LOG.info("after runInternal");
       } catch (Exception e) {
         LOG.error(Thread.currentThread().getName() + ": failed", e);
         mResult.addErrorMessage(e.getMessage());
@@ -230,6 +240,7 @@ public class StressUcxBench extends StressWorkerBench {
 
 
     public void runInternal() throws Exception {
+      LOG.info("start runInternal...");
       String ufsFilePath = mFilePaths[mTargetFileIndex];
       Protocol.OpenUfsBlockOptions openUfsBlockOptions =
           Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(ufsFilePath)
@@ -246,17 +257,17 @@ public class StressUcxBench extends StressWorkerBench {
           .requestWakeupRMA()
           .requestThreadSafety());
 
+      LOG.info("line 260..");
       Protocol.ReadRequestRMA.Builder requestRMABuilder = Protocol.ReadRequestRMA.newBuilder()
           .setOpenUfsBlockOptions(openUfsBlockOptions);
-      InetSocketAddress serverAddr = new InetSocketAddress(
-          mTargetWorker.getNetAddress().getHost(), mParameters.mUcpPort);
-      mReader = new UcxDataReader(serverAddr, ucpWorker, null, requestRMABuilder);
+      mReader = new UcxDataReader(mUcpServerAddr, ucpWorker, null, requestRMABuilder);
 
       // When to start recording measurements
       long recordMs = mContext.getStartMs() + FormatUtils.parseTimeSize(mParameters.mWarmup);
       mResult.setRecordStartMs(recordMs);
 
       long waitMs = mContext.getStartMs() - CommonUtils.getCurrentMs();
+      LOG.info("line 270..");
       if (waitMs < 0) {
         throw new IllegalStateException(String.format(
             "Thread missed barrier. Increase the start delay. start: %d current: %d",
@@ -271,24 +282,24 @@ public class StressUcxBench extends StressWorkerBench {
       SAMPLING_LOG.info("Test started and recording will be started after the warm up at {}",
           CommonUtils.convertMsToDate(recordMs, dateFormat));
 
-      String workerID = mBaseParameters.mIndex;
-      int lastDashIndex = workerID.lastIndexOf("-");
-      if (lastDashIndex != -1) {
-        workerID = toString().substring(lastDashIndex + 1);
-      }
+      LOG.info("line 284..");
       WorkerBenchCoarseDataPoint dp = new WorkerBenchCoarseDataPoint(
-          Long.parseLong(workerID),
+          Long.parseLong("0"),
           Thread.currentThread().getId());
       WorkerBenchDataPoint slice = new WorkerBenchDataPoint();
       List<Long> throughputList = new ArrayList<>();
       long lastSlice = 0;
 
+      LOG.info("line 293..");
       while (!Thread.currentThread().isInterrupted()
           && CommonUtils.getCurrentMs() < mContext.getEndMs()) {
         // Keep reading the same file
+        LOG.info("line 297..");
         long startMs = CommonUtils.getCurrentMs() - recordMs;
+        LOG.info("line 299..");
         BenchThread.ApplyOperationOutput output = applyOperation();
         if (startMs > 0) {
+          LOG.info("line 302..");
           if (output.mBytesRead > 0) {
             mResult.setIOBytes(mResult.getIOBytes() + output.mBytesRead);
             slice.mCount += 1;

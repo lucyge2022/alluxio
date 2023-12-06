@@ -185,10 +185,14 @@ public abstract class Benchmark<T extends TaskResult> {
       }
 
       // aggregate the results
-      String resultAggregated = result.aggregator().aggregate(
-          Collections.singletonList(result)).toJson();
-      LOG.info("Merged results {}", resultAggregated);
-      return resultAggregated;
+      try {
+        String resultAggregated = result.aggregator().aggregate(
+            Collections.singletonList(result)).toJson();
+        LOG.info("Merged results {}", resultAggregated);
+        return resultAggregated;
+      } catch (NullPointerException ex) {
+        LOG.error("NPE:result:{}", result);
+      }
     } else {
       // Spawn a new process
       List<String> command = new ArrayList<>();

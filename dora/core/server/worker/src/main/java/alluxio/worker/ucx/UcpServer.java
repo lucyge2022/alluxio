@@ -278,6 +278,7 @@ public class UcpServer {
     @Override
     public void run() {
 //      UcpRequest reqToConn = recvEstablishConnRequest();
+      System.out.println("Current thread:" + Thread.currentThread().getId());
       while (!Thread.interrupted()) {
         try {
           acceptNewConn();
