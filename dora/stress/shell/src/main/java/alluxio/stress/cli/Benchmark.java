@@ -193,6 +193,7 @@ public abstract class Benchmark<T extends TaskResult> {
       } catch (NullPointerException ex) {
         LOG.error("NPE:result:{}", result);
       }
+      return "";
     } else {
       // Spawn a new process
       List<String> command = new ArrayList<>();
