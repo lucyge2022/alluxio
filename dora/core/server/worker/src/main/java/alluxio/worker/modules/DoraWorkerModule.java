@@ -31,6 +31,7 @@ import alluxio.worker.file.FileSystemMasterClient;
 import alluxio.worker.http.HttpServer;
 import alluxio.worker.http.HttpServerInitializer;
 import alluxio.worker.http.PagedService;
+import alluxio.worker.ucx.UcpServer;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Scopes;

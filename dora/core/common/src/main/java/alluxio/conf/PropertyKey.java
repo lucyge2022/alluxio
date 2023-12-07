@@ -6909,6 +6909,13 @@ public final class PropertyKey implements Comparable<PropertyKey> {
           .setConsistencyCheckLevel(ConsistencyCheckLevel.ENFORCE)
           .setScope(Scope.WORKER)
           .build();
+  public static final PropertyKey UCP_TRANSMISSION_ENABLED =
+      booleanBuilder(Name.UCP_TRANSMISSION_ENABLED)
+          .setDefaultValue(true)
+          .setDescription("Whether to enable UCP server.")
+          .setConsistencyCheckLevel(ConsistencyCheckLevel.ENFORCE)
+          .setScope(Scope.WORKER)
+          .build();
 
   public static final PropertyKey USER_DYNAMIC_CONSISTENT_HASH_RING_ENABLED =
       booleanBuilder(Name.USER_DYNAMIC_CONSISTENT_HASH_RING_ENABLED)
@@ -8541,6 +8548,9 @@ public final class PropertyKey implements Comparable<PropertyKey> {
 
     public static final String USER_NETTY_DATA_TRANSMISSION_ENABLED =
         "alluxio.user.netty.data.transmission.enabled";
+
+    public static final String UCP_TRANSMISSION_ENABLED =
+        "alluxio.ucp.transmission.enabled";
 
     public static final String USER_DYNAMIC_CONSISTENT_HASH_RING_ENABLED =
         "alluxio.user.dynamic.consistent.hash.ring.enabled";

@@ -10,6 +10,7 @@ import alluxio.client.file.cache.PageMetaStore;
 import alluxio.conf.Configuration;
 import alluxio.util.ThreadFactoryUtils;
 
+import com.google.inject.Inject;
 import org.apache.commons.codec.binary.Hex;
 import org.openucx.jucx.ucp.UcpConnectionRequest;
 import org.openucx.jucx.ucp.UcpContext;
@@ -58,6 +59,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
+import javax.inject.Named;
 
 public class UcpServer {
   private static final Logger LOG = LoggerFactory.getLogger(UcpServer.class);
@@ -141,14 +143,18 @@ public class UcpServer {
     }
   }
 
-  public UcpServer(@Nullable CacheManager cacheManager) throws IOException {
+  @Inject
+  public UcpServer(
+      CacheManager cacheManager) throws IOException {
     if (cacheManager == null) {
+      System.out.println("DEBUGLUCY:null cachemanager");
       CacheManagerOptions cacheManagerOptions =
           CacheManagerOptions.createForWorker(Configuration.global());
       mCacheManager = LocalCacheManager.create(
           cacheManagerOptions, PageMetaStore.create(
               CacheManagerOptions.createForWorker(Configuration.global())));
     } else {
+      System.out.println("DEBUGLUCY:non-null cachemanager");
       mCacheManager = cacheManager;
     }
     mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams()
