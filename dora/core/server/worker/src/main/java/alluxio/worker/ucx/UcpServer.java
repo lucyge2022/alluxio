@@ -178,6 +178,11 @@ public class UcpServer {
 
   public void awaitTermination() {
     mAcceptorExecutor.shutdown();
+    try {
+      mAcceptorExecutor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+    } catch (InterruptedException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   public static void main(String[] args) {

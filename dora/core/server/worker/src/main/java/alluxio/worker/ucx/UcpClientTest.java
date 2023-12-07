@@ -67,7 +67,8 @@ public class UcpClientTest {
 //    mLocalCacheManager = LocalCacheManager.create(
 //        cacheManagerOptions, PageMetaStore.create(
 //            CacheManagerOptions.createForWorker(Configuration.global())));
-    mWorker = sGlobalContext.newWorker(new UcpWorkerParams());
+    mWorker = sGlobalContext.newWorker(new UcpWorkerParams()
+        .requestWakeupRMA().requestThreadSafety());
     mHost = host;
     mPort = port;
   }
@@ -98,7 +99,9 @@ public class UcpClientTest {
             .build();
     Protocol.ReadRequest.Builder requestBuilder = Protocol.ReadRequest.newBuilder()
         .setOpenUfsBlockOptions(openUfsBlockOptions);
-    UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, requestBuilder, null);
+    Protocol.ReadRequestRMA.Builder requestRMABuilder = Protocol.ReadRequestRMA.newBuilder()
+        .setOpenUfsBlockOptions(openUfsBlockOptions);
+    UcxDataReader reader = new UcxDataReader(serverAddr, mWorker, null, requestRMABuilder);
     reader.acquireServerConn();
     for (int i=0; i<1; i++) {
       long position = i * pageSize + mRandom.nextInt(pageSize);
@@ -106,10 +109,10 @@ public class UcpClientTest {
       ByteBuffer buffer = ByteBuffer.allocateDirect(length);
       LOG.info("reading position:{}:length:{}", position, length);
       try {
-        reader.read(position, buffer, length);
+        int bytesRead = reader.read(position, buffer, length);
         buffer.clear();
-        LOG.info("buffer:{}", buffer);
-        byte[] readContent = new byte[length];
+        LOG.info("buffer:{}, bytesRead:{}", buffer, bytesRead);
+        byte[] readContent = new byte[bytesRead];
         buffer.get(readContent);
         String readContentMd5 = "";
         try {

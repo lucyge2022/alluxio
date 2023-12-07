@@ -87,6 +87,7 @@ public class UcxConnectionTest {
     UcpWorker clientWorker = sGlobalContext.newWorker(new UcpWorkerParams().requestThreadSafety());
     // client init conn
     System.out.println("Starting init new conn...");
+    System.out.println("remoteaddr:" + remoteAddr.toString());
     UcxConnection connToServer = UcxConnection.initNewConnection(remoteAddr, clientWorker);
     System.out.println("Conn established to server:" + connToServer.toString());
     serverThread.join();
