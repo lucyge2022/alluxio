@@ -71,12 +71,8 @@ public class UcxReadTest {
   @BeforeClass
   public static void beforeClass() throws Exception {
     System.out.println("start beforeClass...");
-//    PropertyConfigurator.configure("/root/github/alluxio/conf/lucy-log4j2.xml");
     Properties props = new Properties();
-//    System.setProperty("myProperty", "lucy.log");
     props.setProperty(PropertyKey.LOGGER_TYPE.toString(), "Console");
-//    props.setProperty(PropertyKey.CONF_DIR.toString(), "/root/github/alluxio/conf/");
-//    props.setProperty(PropertyKey.LOGS_DIR.toString(), "/root/github/alluxio/logs/");
 
     mConf.set(PropertyKey.USER_CLIENT_CACHE_DIRS, mTemp.getRoot().getAbsolutePath());
     mConf.set(PropertyKey.USER_CLIENT_CACHE_STORE_TYPE, PageStoreType.LOCAL);
@@ -92,13 +88,7 @@ public class UcxReadTest {
     CommonUtils.waitFor("restore completed",
         () -> mLocalCacheManager.state() == CacheManager.State.READ_WRITE,
         WaitForOptions.defaults().setTimeoutMs(10000));
-    mServer = UcpServer.getInstance(() -> {
-      try {
-        return new UcpServer(mLocalCacheManager);
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      }
-    });
+    mServer = new UcpServer(mLocalCacheManager);
   }
 
   class SampleData {

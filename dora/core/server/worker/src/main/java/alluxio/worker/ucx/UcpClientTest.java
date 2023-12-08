@@ -41,7 +41,6 @@ public class UcpClientTest {
       .requestWakeupFeature());
 
   public Random mRandom = new Random();
-  public LocalCacheManager mLocalCacheManager;
   public UcpWorker mWorker;
   public String mHost;
   public int mPort;
@@ -64,9 +63,6 @@ public class UcpClientTest {
   public UcpClientTest(String host, int port) throws IOException {
     CacheManagerOptions cacheManagerOptions =
         CacheManagerOptions.createForWorker(Configuration.global());
-//    mLocalCacheManager = LocalCacheManager.create(
-//        cacheManagerOptions, PageMetaStore.create(
-//            CacheManagerOptions.createForWorker(Configuration.global())));
     mWorker = sGlobalContext.newWorker(new UcpWorkerParams()
         .requestWakeupRMA().requestThreadSafety());
     mHost = host;
@@ -123,8 +119,6 @@ public class UcpClientTest {
           /* No actions. Continue with other hash method. */
         }
         LOG.info("readContentMd5:{}:sample data md5:{}", readContentMd5, sampleData.mMd5);
-//        Preconditions.checkArgument(Arrays.equals(readContent, sampleData.mData),
-//            String.format("pageid:{} content mismatch.", i));
       } catch (IOException e) {
         System.out.println("IOException on position:" + position + ":length:" + length);
         throw new RuntimeException(e);

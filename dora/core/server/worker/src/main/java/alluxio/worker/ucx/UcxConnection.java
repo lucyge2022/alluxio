@@ -36,6 +36,7 @@ public class UcxConnection implements Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(UcxConnection.class);
   private long mTagToReceive = -1L;
   private long mTagToSend = -1L;
+  private final UcpWorker mUcpWorker;
   private UcpEndpoint mEndpoint;
   private InetSocketAddress mRemoteAddress;
   private AtomicBoolean mClosed = new AtomicBoolean(false);
@@ -47,7 +48,8 @@ public class UcxConnection implements Closeable {
   // For streaming feature so we can send out-of-order data for multiplexing
   private AtomicLong mSequencer = new AtomicLong(1L);
 
-  public UcxConnection() {
+  public UcxConnection(UcpWorker worker) {
+    mUcpWorker = worker;
   }
 
   public long getTagToSend() {
@@ -86,6 +88,10 @@ public class UcxConnection implements Closeable {
     return mSequencer.incrementAndGet();
   }
 
+  public UcpWorker getUcpWorker() {
+    return mUcpWorker;
+  }
+
   @Override
   public String toString() {
     return MoreObjects.toStringHelper(this)
@@ -118,10 +124,10 @@ public class UcxConnection implements Closeable {
         UcxMemoryPool.allocateMemory(AlluxioUcxUtils.METADATA_SIZE_COMMON,
         UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
 
-    ActiveRequest activeRequest = new ActiveRequest();
+    ActiveRequest activeRequest = new ActiveRequest(this);
     activeRequest.setUcpMemory(recvMemoryBlock);
     final UcxConnection thisConn = this;
-    UcpRequest recvRequest = UcpServer.getInstance().getGlobalWorker().recvTaggedNonBlocking(
+    UcpRequest recvRequest = mUcpWorker.recvTaggedNonBlocking(
         recvMemoryBlock.getAddress(), recvMemoryBlock.getLength(),
         mTagToReceive, 0xFFFFFFFFFFFFL, new UcxCallback() {
           public void onSuccess(UcpRequest request) {
@@ -183,8 +189,10 @@ public class UcxConnection implements Closeable {
     // The reference of pending memory allocated during creation of ucp requests
     // lifecycle of this memory block gets tracked and handled in here.
     private UcpMemory mMemoryBlock;
+    private final UcxConnection mUcxConnection;
 
-    public ActiveRequest() {
+    public ActiveRequest(UcxConnection conn) {
+      mUcxConnection = conn;
     }
 
     public void setUcpRequest(UcpRequest ucpRequest) {
@@ -217,7 +225,7 @@ public class UcxConnection implements Closeable {
       Currently finding out reason or if there's a bug in OpenUcx community.
       */
       if (mUcpRequest != null) {
-        UcpServer.getInstance().getGlobalWorker().cancelRequest(mUcpRequest);
+        mUcxConnection.getUcpWorker().cancelRequest(mUcpRequest);
       }
       if (mMemoryBlock != null) {
         mMemoryBlock.close();
@@ -238,7 +246,7 @@ public class UcxConnection implements Closeable {
                     + " status:" + status + ",ep:" + ep.toString()))
             .setSocketAddress(remoteAddr));
 
-    UcxConnection newConnection = new UcxConnection();
+    UcxConnection newConnection = new UcxConnection(worker);
     newConnection.setRemoteAddress(remoteAddr);
     newConnection.setTagToReceive(mTagGenerator.incrementAndGet());
     // generate tag to recv from remote, build up connectionEstablishBuf
@@ -286,7 +294,7 @@ public class UcxConnection implements Closeable {
   public static UcxConnection acceptIncomingConnection(
       UcpEndpoint bootstrapEp, UcpWorker worker, InetSocketAddress remoteAddr)
       throws Exception {
-    UcxConnection newConnection = new UcxConnection();
+    UcxConnection newConnection = new UcxConnection(worker);
     newConnection.setRemoteAddress(remoteAddr);
     ByteBuffer establishConnBuf = ByteBuffer.allocateDirect(AlluxioUcxUtils.METADATA_SIZE_COMMON);
     UcpRequest recvReq = bootstrapEp.recvStreamNonBlocking(

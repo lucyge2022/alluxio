@@ -33,7 +33,6 @@ import javax.annotation.Nullable;
 
 public class UcxDataReader implements PositionReader {
   private static final Logger LOG = LoggerFactory.getLogger(UcxDataReader.class);
-  public static final int PAGE_SIZE = 4096;
 
   InetSocketAddress mAddr;
   private static InetSocketAddress sLocalAddr = null;

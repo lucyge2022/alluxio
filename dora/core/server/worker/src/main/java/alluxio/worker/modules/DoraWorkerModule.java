@@ -68,7 +68,7 @@ public class DoraWorkerModule extends AbstractModule {
       bind(CacheManager.class).toProvider(() ->
       {
         try {
-          return CacheManager.Factory.create(Configuration.global(),
+          return CacheManager.Factory.get(Configuration.global(),
               cacheManagerOptions, pageMetaStore);
         } catch (IOException e) {
           throw new RuntimeException(e);

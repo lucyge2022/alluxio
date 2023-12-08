@@ -1,6 +1,7 @@
 package alluxio.worker.ucx;
 
 import alluxio.AlluxioURI;
+import alluxio.client.file.cache.CacheManager;
 import alluxio.client.file.cache.PageId;
 import alluxio.concurrent.jsr.CompletableFuture;
 import alluxio.conf.Configuration;
@@ -40,6 +41,12 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
 
   @Override
   public void handle(UcxMessage message, UcxConnection remoteConnection) {
+    CacheManager cacheManager = null;
+    try {
+      cacheManager = CacheManager.Factory.get(Configuration.global());
+    } catch (IOException e) {
+      throw new UnknownRuntimeException("Error getting CacheManager instance.");
+    }
     UcpEndpoint remoteEp = remoteConnection.getEndpoint();
     ByteBuffer infoBuffer = message.getRPCMessage();
     long remoteMemAddress;
@@ -83,7 +90,7 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
       PageId pageId = new PageId(fileId, pageIndex);
       try {
         Optional<UcpMemory> readContentUcpMem =
-            UcpServer.getInstance().mCacheManager.getUcpMemory(pageId, pageOffset, readLen);
+            cacheManager.getUcpMemory(pageId, pageOffset, readLen);
         if (!readContentUcpMem.isPresent()) {
           break;
         }

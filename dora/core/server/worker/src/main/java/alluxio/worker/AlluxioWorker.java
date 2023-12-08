@@ -14,7 +14,6 @@ package alluxio.worker;
 import alluxio.ProcessUtils;
 import alluxio.RuntimeConstants;
 import alluxio.util.CommonUtils;
-import alluxio.worker.ucx.UcpServer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,19 +39,18 @@ public final class AlluxioWorker {
       System.exit(-1);
     }
 
-    UcpServer.main(args);
-//    CommonUtils.PROCESS_TYPE.set(CommonUtils.ProcessType.WORKER);
-//    WorkerProcess process;
-//    try {
-//      process = WorkerProcess.Factory.create();
-//    } catch (Throwable t) {
-//      ProcessUtils.fatalError(LOG, t, "Failed to create worker process");
-//      // fatalError will exit, so we shouldn't reach here.
-//      throw t;
-//    }
-//
-//    ProcessUtils.stopProcessOnShutdown(process);
-//    ProcessUtils.run(process);
+    CommonUtils.PROCESS_TYPE.set(CommonUtils.ProcessType.WORKER);
+    WorkerProcess process;
+    try {
+      process = WorkerProcess.Factory.create();
+    } catch (Throwable t) {
+      ProcessUtils.fatalError(LOG, t, "Failed to create worker process");
+      // fatalError will exit, so we shouldn't reach here.
+      throw t;
+    }
+
+    ProcessUtils.stopProcessOnShutdown(process);
+    ProcessUtils.run(process);
   }
 
   private AlluxioWorker() {} // prevent instantiation

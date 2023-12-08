@@ -1,8 +1,11 @@
 package alluxio.worker.ucx;
 
 import alluxio.AlluxioURI;
+import alluxio.client.file.cache.CacheManager;
 import alluxio.client.file.cache.PageId;
+import alluxio.conf.Configuration;
 import alluxio.exception.PageNotFoundException;
+import alluxio.exception.runtime.UnknownRuntimeException;
 import alluxio.proto.dataserver.Protocol;
 
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -27,10 +30,8 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
   Protocol.ReadRequest mReadRequest = null;
   UcpEndpoint mRemoteEp;
   AtomicLong mSequencer;
-  //conf.getBytes(PropertyKey.WORKER_PAGE_STORE_PAGE_SIZE);
 
   public ReadRequestStreamHandler() {
-
   }
 
   public ReadRequestStreamHandler(UcpEndpoint remoteEndpoint, AtomicLong sequencer,
@@ -38,18 +39,19 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
     mReadRequest = null;
     mRemoteEp = remoteEndpoint;
     mSequencer = sequencer;
-//    sequencer = mPeerToSequencers.computeIfAbsent(peerInfo, pi -> new AtomicLong(0L));
-//      mReadRequest = parseReadRequest(recvBuffer);
-//    mReadRequest = request;
   }
 
   @Override
   public void handle(UcxMessage message, UcxConnection remoteConnection) {
     mRemoteEp = remoteConnection.getEndpoint();
+    CacheManager cacheManager = null;
     try {
       mReadRequest = Protocol.ReadRequest.parseFrom(message.getRPCMessage());
+      cacheManager = CacheManager.Factory.get(Configuration.global());
     } catch (InvalidProtocolBufferException e) {
-      throw new RuntimeException(e);
+      throw new UnknownRuntimeException("Error in parsing ReadRequest protobuf.");
+    } catch (IOException e) {
+      throw new UnknownRuntimeException("Error getting CacheManager instance.");
     }
     final String fileId =
         new AlluxioURI(mReadRequest.getOpenUfsBlockOptions().getUfsPath()).hash();
@@ -63,7 +65,7 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
       PageId pageId = new PageId(fileId, pageIndex);
       try {
         Optional<UcpMemory> readContentUcpMem =
-            UcpServer.getInstance().mCacheManager.getUcpMemory(pageId, pageOffset, readLen);
+            cacheManager.getUcpMemory(pageId, pageOffset, readLen);
         if (!readContentUcpMem.isPresent()) {
           break;
         }

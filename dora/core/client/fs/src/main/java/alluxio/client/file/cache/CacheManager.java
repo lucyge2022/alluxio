@@ -36,6 +36,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 
 /**
@@ -90,12 +91,24 @@ public interface CacheManager extends AutoCloseable, CacheStatus {
      *         case creation takes a long time by other threads.
      */
     public static CacheManager get(AlluxioConfiguration conf) throws IOException {
+      CacheManagerOptions options = CacheManagerOptions.create(conf);
+      return get(conf, options, PageMetaStore.create(options));
+    }
+
+    /**
+     * @param conf the Alluxio configuration
+     * @return current CacheManager handle, creating a new one if it doesn't yet exist or null in
+     *         case creation takes a long time by other threads.
+     */
+    public static CacheManager get(AlluxioConfiguration conf,
+                                   CacheManagerOptions options,
+                                   PageMetaStore pageMetaStore) throws IOException {
       // TODO(feng): support multiple cache managers
       if (CACHE_MANAGER.get() == null) {
         try (LockResource lockResource = new LockResource(CACHE_INIT_LOCK)) {
           if (CACHE_MANAGER.get() == null) {
             CACHE_MANAGER.set(
-                create(conf));
+                create(conf, options, pageMetaStore));
           }
         } catch (IOException e) {
           Metrics.CREATE_ERRORS.inc();
@@ -103,15 +116,6 @@ public interface CacheManager extends AutoCloseable, CacheStatus {
         }
       }
       return CACHE_MANAGER.get();
-    }
-
-    /**
-     * @param conf the Alluxio configuration
-     * @return an instance of {@link CacheManager}
-     */
-    public static CacheManager create(AlluxioConfiguration conf) throws IOException {
-      CacheManagerOptions options = CacheManagerOptions.create(conf);
-      return create(conf, options, PageMetaStore.create(options));
     }
 
     /**
