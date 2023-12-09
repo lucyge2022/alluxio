@@ -107,7 +107,7 @@ public final class WorkerBenchParameters extends FileSystemParameters {
 
   @Parameter(names = {"--ucp-port"},
       description = "Ucp Server port")
-  public int mUcpPort = 1234;
+  public int mUcpPort = 59999;
 
   @DynamicParameter(names = "--conf", description = "HDFS client configuration. Can be repeated.")
   public Map<String, String> mConf = new HashMap<>();
