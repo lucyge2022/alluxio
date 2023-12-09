@@ -19,9 +19,11 @@ import alluxio.metrics.MetricsSystem;
 import alluxio.network.protocol.databuffer.DataFileChannel;
 
 import com.codahale.metrics.Counter;
+import org.openucx.jucx.ucp.UcpMemory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Optional;
@@ -141,6 +143,12 @@ public class NoExceptionCacheManager implements CacheManager {
       Metrics.GET_ERRORS.inc();
       return -1;
     }
+  }
+
+  @Override
+  public Optional<UcpMemory> getUcpMemory(PageId pageId, int pageOffset, int bytesToRead)
+      throws PageNotFoundException, IOException {
+    return mCacheManager.getUcpMemory(pageId, pageOffset, bytesToRead);
   }
 
   @Override
