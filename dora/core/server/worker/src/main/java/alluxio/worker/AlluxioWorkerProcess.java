@@ -289,6 +289,10 @@ public class AlluxioWorkerProcess implements WorkerProcess {
       mHttpServer.start();
     }
 
+    if (mUcpServer != null && Configuration.getBoolean(PropertyKey.UCP_TRANSMISSION_ENABLED)) {
+      mUcpServer.start();
+    }
+
     // Start monitor jvm
     if (Configuration.getBoolean(PropertyKey.WORKER_JVM_MONITOR_ENABLED)) {
       mJvmPauseMonitor =

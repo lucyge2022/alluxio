@@ -94,17 +94,18 @@ public class UcpServer {
     mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams()
         .requestWakeupRMA()
         .requestThreadSafety());
+  }
+
+  public void start() {
+    LOG.info("Starting UcpServer...");
     // TODO now its binding to all addrs, could choose NIC with "ib-"
     // to select out those IB cards addrs to bind.
     List<InetAddress> addressesToBind = getAllAddresses();
     UcpListenerParams listenerParams = new UcpListenerParams()
-        .setConnectionHandler(new UcpListenerConnectionHandler() {
-          @Override
-          public void onConnectionRequest(UcpConnectionRequest connectionRequest) {
-            LOG.info("Incoming request, clientAddr:{} clientId:{}",
-                connectionRequest.getClientAddress(), connectionRequest.getClientId());
-            mConnectionRequests.offer(connectionRequest);
-          }
+        .setConnectionHandler(connectionRequest -> {
+          LOG.info("Incoming request, clientAddr:{} clientId:{}",
+              connectionRequest.getClientAddress(), connectionRequest.getClientId());
+          mConnectionRequests.offer(connectionRequest);
         });
     for (InetAddress addr : addressesToBind) {
       UcpListener ucpListener = mGlobalWorker.newListener(listenerParams.setSockAddr(
@@ -112,6 +113,7 @@ public class UcpServer {
       LOG.info("Bound UcpListener on address:{}", ucpListener.getAddress());
     }
     mAcceptorExecutor.submit(new AcceptorThread());
+    LOG.info("UcpServer started.");
   }
 
   public void awaitTermination() {
