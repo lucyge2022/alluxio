@@ -40,7 +40,7 @@ public class AsyncFuture<T> {
     mFuture.completeExceptionally(ex);
   }
 
-  public boolean get() throws ExecutionException, InterruptedException {
+  public boolean get() throws Throwable {
     if (mCompletedCount.incrementAndGet() >= mTotalExpected.get()) {
       mFuture.complete(true);
     }

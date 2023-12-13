@@ -4,6 +4,7 @@ import alluxio.AlluxioURI;
 import alluxio.client.file.cache.CacheManager;
 import alluxio.client.file.cache.PageId;
 import alluxio.conf.Configuration;
+import alluxio.conf.PropertyKey;
 import alluxio.exception.PageNotFoundException;
 import alluxio.exception.runtime.UnknownRuntimeException;
 import alluxio.proto.dataserver.Protocol;
@@ -22,23 +23,17 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * (Deprecated, unused now)
+ * Handling ReadRequest with UCX Stream API.
+ */
 public class ReadRequestStreamHandler implements UcxRequestHandler {
   private static final Logger LOG = LoggerFactory.getLogger(UcpServer.class);
-  private static final long WORKER_PAGE_SIZE = 1*1024*1024L;
   Protocol.ReadRequest mReadRequest = null;
   UcpEndpoint mRemoteEp;
-  AtomicLong mSequencer;
 
   public ReadRequestStreamHandler() {
-  }
-
-  public ReadRequestStreamHandler(UcpEndpoint remoteEndpoint, AtomicLong sequencer,
-                                  Protocol.ReadRequest request) {
-    mReadRequest = null;
-    mRemoteEp = remoteEndpoint;
-    mSequencer = sequencer;
   }
 
   @Override
@@ -57,11 +52,12 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
         new AlluxioURI(mReadRequest.getOpenUfsBlockOptions().getUfsPath()).hash();
     long offset = mReadRequest.getOffset();
     long totalLength = mReadRequest.getLength();
+    long pageSize = Configuration.global().getBytes(PropertyKey.WORKER_PAGE_STORE_PAGE_SIZE);
     List<UcpRequest> requests = new ArrayList<>();
     for (int bytesRead = 0; bytesRead < totalLength; ) {
-      int pageIndex = (int)(offset / WORKER_PAGE_SIZE);
-      int pageOffset = (int)(offset % WORKER_PAGE_SIZE);
-      int readLen = (int)Math.min(totalLength - bytesRead, WORKER_PAGE_SIZE - pageOffset);
+      int pageIndex = (int)(offset / pageSize);
+      int pageOffset = (int)(offset % pageSize);
+      int readLen = (int)Math.min(totalLength - bytesRead, pageSize - pageOffset);
       PageId pageId = new PageId(fileId, pageIndex);
       try {
         Optional<UcpMemory> readContentUcpMem =
@@ -81,7 +77,7 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
         UcpRequest preambleReq = mRemoteEp.sendStreamNonBlocking(UcxUtils.getAddress(preamble),
             16, new UcxCallback() {
               public void onSuccess(UcpRequest request) {
-                LOG.info("preamble sent, sequence:{}, len:{}"
+                LOG.debug("preamble sent, sequence:{}, len:{}"
                     ,seq, readContentUcpMem.get().getLength());
               }
 
@@ -101,7 +97,7 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
         UcpRequest sendReq = mRemoteEp.sendStreamNonBlocking(
             addrs, sizes, new UcxCallback() {
               public void onSuccess(UcpRequest request) {
-                LOG.info("send complete for pageoffset:{}:readLen:{}",
+                LOG.debug("send complete for pageoffset:{}:readLen:{}",
                     pageOffset, readLen);
                 readContentUcpMem.get().deregister();
               }
@@ -117,9 +113,9 @@ public class ReadRequestStreamHandler implements UcxRequestHandler {
         throw new RuntimeException(e);
       }
     }// end for
-    LOG.info("Handle read req:{} complete", mReadRequest);
+    LOG.debug("Handle read req:{} complete", mReadRequest);
     while (requests.stream().anyMatch(r -> !r.isCompleted())) {
-      LOG.info("Wait for all {} ucpreq to complete, sleep for 5 sec...", requests.size());
+      LOG.debug("Wait for all {} ucpreq to complete, sleep for 5 sec...", requests.size());
       try {
         Thread.sleep(5000);
       } catch (InterruptedException e) {

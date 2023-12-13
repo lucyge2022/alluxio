@@ -7,6 +7,7 @@ import alluxio.client.file.cache.PageId;
 import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
 
+import com.google.common.base.Preconditions;
 import com.google.inject.Inject;
 import org.openucx.jucx.ucp.UcpConnectionRequest;
 import org.openucx.jucx.ucp.UcpContext;
@@ -86,10 +87,7 @@ public class UcpServer {
   @Inject
   public UcpServer(
       CacheManager cacheManager) throws IOException {
-    if (cacheManager == null) {
-      System.out.println("DEBUGLUCY:null cachemanager");
-      throw new IOException("Need cachemanager input");
-    }
+    Preconditions.checkNotNull(cacheManager, "Need CacheManager instance.");
     mCacheManager = cacheManager;
     mGlobalWorker = sGlobalContext.newWorker(new UcpWorkerParams()
         .requestWakeupRMA()
@@ -98,12 +96,12 @@ public class UcpServer {
 
   public void start() {
     LOG.info("Starting UcpServer...");
-    // TODO now its binding to all addrs, could choose NIC with "ib-"
+    // TODO(lucy) now its binding to all addrs, could choose NIC with "ib-"
     // to select out those IB cards addrs to bind.
     List<InetAddress> addressesToBind = getAllAddresses();
     UcpListenerParams listenerParams = new UcpListenerParams()
         .setConnectionHandler(connectionRequest -> {
-          LOG.info("Incoming request, clientAddr:{} clientId:{}",
+          LOG.debug("Incoming request, clientAddr:{} clientId:{}",
               connectionRequest.getClientAddress(), connectionRequest.getClientId());
           mConnectionRequests.offer(connectionRequest);
         });
@@ -123,24 +121,6 @@ public class UcpServer {
     } catch (InterruptedException e) {
       throw new RuntimeException(e);
     }
-  }
-
-  public static void main(String[] args) {
-    LOG.info("Starting ucp server...");
-    UcpServer ucpServer = null;
-    try {
-      ucpServer = new UcpServer(CacheManager.Factory.get(Configuration.global()));
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
-    String basePath = args[1];
-    int numOfFile = Integer.parseInt(args[2]);
-    String ufsBase = "file://" + basePath;
-    for (int i=1;i<=numOfFile;i++) {
-      ucpServer.prefill(String.format("%s/file%d", ufsBase, i), 1024*1024);
-    }
-    LOG.info("Awaiting termination...");
-    ucpServer.awaitTermination();
   }
 
   public static List<InetAddress> getAllAddresses() {
@@ -192,7 +172,7 @@ public class UcpServer {
         try {
           acceptNewConn();
           while (mGlobalWorker.progress() == 0) {
-            LOG.info("nothing to progress. wait for events..");
+            LOG.debug("nothing to progress. wait for events..");
             try {
               mGlobalWorker.waitForEvents();
             } catch (Exception e) {
@@ -201,7 +181,7 @@ public class UcpServer {
           }
         } catch (Exception e) {
           // not sure what exception would be thrown here.
-          LOG.info("Exception in AcceptorThread", e);
+          LOG.error("Exception in AcceptorThread:", e);
         }
       }
     }

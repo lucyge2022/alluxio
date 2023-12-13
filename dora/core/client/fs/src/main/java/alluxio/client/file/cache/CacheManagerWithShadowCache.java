@@ -64,6 +64,11 @@ public class CacheManagerWithShadowCache implements CacheManager {
   }
 
   @Override
+  public int cache(PageId pageId, CacheContext cacheContext, Supplier<byte[]> externalDataSupplier) {
+    return mCacheManager.cache(pageId, cacheContext, externalDataSupplier);
+  }
+
+  @Override
   public int get(PageId pageId, int pageOffset, int bytesToRead, ReadTargetBuffer target,
       CacheContext cacheContext) {
     getOrUpdateShadowCache(pageId, bytesToRead, cacheContext);

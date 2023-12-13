@@ -62,7 +62,7 @@ public class UcxDataReader implements PositionReader {
     if (mConnection == null || mConnection.isClosed()) {
       try {
         acquireConnLock.lock();
-        LOG.info("Connecting to : {}", mAddr);
+        LOG.debug("Connecting to : {}", mAddr);
         if (mConnection == null || mConnection.isClosed()) {
           mConnection = UcxConnection.initNewConnection(mAddr, mWorker);
         }
@@ -133,7 +133,7 @@ public class UcxDataReader implements PositionReader {
     UcpRequest sendRequest = mConnection.getEndpoint().sendTaggedNonBlocking(
         ucxMesgMemBuffer, mConnection.getTagToSend(), new UcxCallback() {
           public void onSuccess(UcpRequest request) {
-            LOG.info("ReadRMARequest:{} sent.", readRequest);
+            LOG.debug("ReadRMARequest:{} sent.", readRequest);
             ucxMesgMem.deregister();
           }
 
@@ -142,7 +142,7 @@ public class UcxDataReader implements PositionReader {
             throw new UcxException(errorMsg);
           }
         });
-    LOG.info("Waiting for read request to send...");
+    LOG.debug("Waiting for read request to send...");
     waitForRequest(sendRequest);
 
     // read with RMA
@@ -151,7 +151,7 @@ public class UcxDataReader implements PositionReader {
         UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
     UcpRequest replyReq = mConnection.getEndpoint().recvStreamNonBlocking(relyMemoryBlock.getAddress(),
         relyMemoryBlock.getLength(), 0, null);
-    LOG.info("Waiting for RMA done signal reception...");
+    LOG.debug("Waiting for RMA done signal reception...");
     waitForRequest(replyReq);
     UcxMessage replyMessage = UcxMessage.fromByteBuffer(UcxUtils.getByteBufferView(
         relyMemoryBlock.getAddress(), relyMemoryBlock.getLength()));
@@ -159,6 +159,7 @@ public class UcxDataReader implements PositionReader {
         replyMessage.getRPCMessage());
     relyMemoryBlock.deregister();
     resultMemBlock.deregister(); // now target buffer available for caller to access
+    LOG.debug("rmaReadResponse:{}", rmaReadResponse);
     return (int)rmaReadResponse.getReadLength();
   }
 
@@ -182,7 +183,7 @@ public class UcxDataReader implements PositionReader {
     UcpRequest sendRequest = mConnection.getEndpoint().sendTaggedNonBlocking(
         ucxMesgMemBuffer, mConnection.getTagToSend(), new UcxCallback() {
       public void onSuccess(UcpRequest request) {
-        LOG.info("ReadReq:{} sent.", readRequest);
+        LOG.debug("ReadReq:{} sent.", readRequest);
         ucxMesgMem.deregister();
       }
 
@@ -191,7 +192,7 @@ public class UcxDataReader implements PositionReader {
         throw new UcxException(errorMsg);
       }
     });
-    LOG.info("Waiting for read request to send...");
+    LOG.debug("Waiting for read request to send...");
     waitForRequest(sendRequest);
     // now wait to recv data
     Preconditions.checkArgument(buffer.byteBuffer().isDirect(), "ByteBuffer must be direct buffer");
@@ -209,7 +210,7 @@ public class UcxDataReader implements PositionReader {
               throw new UcxException(errorMsg);
             }
           });
-      LOG.info("Waiting for preamble...");
+      LOG.debug("Waiting for preamble...");
       waitForRequest(recvReq);
       preamble.clear();
       long seq = preamble.getLong();
@@ -223,7 +224,7 @@ public class UcxDataReader implements PositionReader {
       addrs[1] = UcxUtils.getAddress(dataBuffer);
       sizes[0] = 8;
       sizes[1] = size;
-      LOG.info("preamble info:seq:{}:len:{}", seq, size);
+      LOG.debug("preamble info:seq:{}:len:{}", seq, size);
       UcpRequest dataRecvReq = mConnection.getEndpoint().recvStreamNonBlocking(addrs, sizes,
           UcpConstants.UCP_STREAM_RECV_FLAG_WAITALL, new UcxCallback() {
             public void onSuccess(UcpRequest request) {
@@ -232,7 +233,7 @@ public class UcxDataReader implements PositionReader {
               long sequence = seqBufView.getLong();
               ByteBuffer dataBufView = UcxUtils.getByteBufferView(addrs[1], sizes[1]);
               dataBufView.clear();
-              LOG.info("Received buffers, seq:{}, data buf size:{}", sequence, sizes[1]);
+              LOG.debug("Received buffers, seq:{}, data buf size:{}", sequence, sizes[1]);
               buffers.put(sequence, dataBufView);
             }
 
@@ -242,7 +243,7 @@ public class UcxDataReader implements PositionReader {
               throw new UcxException(errorMsg);
             }
           });
-      LOG.info("Offering actual data recReq to q...");
+      LOG.debug("Offering actual data recReq to q...");
       dataUcpRecvReqs.offer(dataRecvReq);
 //      waitForRequest(recvReq);
       bytesRead += size;
@@ -254,7 +255,7 @@ public class UcxDataReader implements PositionReader {
     buffer.byteBuffer().clear();
     while (!buffers.isEmpty()) {
       Map.Entry<Long, ByteBuffer> entry = buffers.pollFirstEntry();
-      LOG.info("Copying seq:{},bufsize:{}", entry.getKey(), entry.getValue());
+      LOG.debug("Copying seq:{},bufsize:{}", entry.getKey(), entry.getValue());
       entry.getValue().clear();
       buffer.byteBuffer().put(entry.getValue());
     }

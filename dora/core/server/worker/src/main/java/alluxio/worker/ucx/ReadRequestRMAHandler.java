@@ -14,6 +14,7 @@ import alluxio.util.io.ByteBufferInputStream;
 import alluxio.util.io.ByteBufferOutputStream;
 
 import com.google.common.base.Preconditions;
+import org.apache.commons.lang3.StringUtils;
 import org.openucx.jucx.UcxCallback;
 import org.openucx.jucx.UcxException;
 import org.openucx.jucx.UcxUtils;
@@ -56,8 +57,6 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
       //  RPC message contains:
       //  client remote mem addr (long) | client remote mem addr Rkey buffer
       //  ReadRequest protobuf
-      LOG.info("[DEBUG], before read remote mem info, infobuffer capacity:{}:pos:{}:limit:{}.",
-          infoBuffer.capacity(), infoBuffer.position(), infoBuffer.limit());
       readRequest = Protocol.ReadRequestRMA.parseFrom(infoBuffer.duplicate());
       remoteMemAddress = readRequest.getRemoteMemAddr();
       byte[] rkeyBufBytes = readRequest.getRkeyBuf().toByteArray();
@@ -65,8 +64,6 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
       rkeyBuf.put(rkeyBufBytes);
       rkeyBuf.clear();
       remoteRKey = remoteEp.unpackRemoteKey(rkeyBuf);
-      LOG.info("[DEBUG], after read remote mem info, infobuffer capacity:{}:pos:{}:limit:{}.",
-          infoBuffer.capacity(), infoBuffer.position(), infoBuffer.limit());
     } catch (IOException e) {
       LOG.error("Exception in parsing RMA Read Request:", e);
       throw new RuntimeException(e);
@@ -79,7 +76,7 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
     long pageSize = Configuration.global().getBytes(PropertyKey.WORKER_PAGE_STORE_PAGE_SIZE);
     long remoteAddrPosition = remoteMemAddress;
 
-    List<UcpRequest> requests = new ArrayList<>();
+    String errMsg = "";
     AsyncFuture<String> asyncFuture = new AsyncFuture<>();
     int totalRequests = 0;
     int bytesRead = 0;
@@ -94,15 +91,16 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
         if (!readContentUcpMem.isPresent()) {
           break;
         }
-        LOG.info("PUT-ing to remoteAddr:{}", remoteAddrPosition);
+        LOG.debug("PUT-ing to remoteAddr:{}", remoteAddrPosition);
         UcpRequest putRequest = remoteEp.putNonBlocking(readContentUcpMem.get().getAddress(),
             readContentUcpMem.get().getLength(), remoteAddrPosition,
             remoteRKey, new UcxCallback() {
               public void onSuccess(UcpRequest request) {
-                LOG.info("onSuccess put pageid:{}:pageOffset:{}:len:{}",
+                LOG.debug("onSuccess put pageid:{}:pageOffset:{}:len:{}",
                     pageId, pageOffset, readLen);
                 asyncFuture.complete(String.format("pageid:%s:pageOffset:%d:len:%d",
                     pageId.toString(), pageOffset, readLen));
+                readContentUcpMem.get().deregister();
               }
 
               public void onError(int ucsStatus, String errorMsg) {
@@ -110,6 +108,7 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
                         + " ucsStatus:{}:errMsg:{}",
                     pageId, pageOffset, readLen, ucsStatus, errorMsg);
                 asyncFuture.fail(new UcxException(errorMsg));
+                readContentUcpMem.get().deregister();
               }
             });
         totalRequests += 1;
@@ -126,22 +125,28 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
         break;
       }
     } // end for
-    LOG.info("Handle RMA read req:{} complete, blockingly wait for all RMA PUT to compelte",
+    LOG.debug("Handle RMA read req:{} complete, blockingly wait for all RMA PUT to compelte",
         readRequest);
     asyncFuture.setTotalExpected(totalRequests);
     try {
       asyncFuture.get();
-    } catch (ExecutionException | InterruptedException e) {
-      throw new UnknownRuntimeException("Exception during waiting for RMA PUT to complete.");
+    } catch (Throwable e) {
+      errMsg = String.format("Error during read ufsPath:%s:fileId:%s:offset:%s:length:%s, exception:%s",
+          readRequest.getOpenUfsBlockOptions().getUfsPath(),
+          fileId, offset, totalLength, e.getMessage());
+      LOG.error(errMsg);
     }
 
-    LOG.info("All PUT request completed, notifying client...");
-    Protocol.ReadResponseRMA readResponseRMA = Protocol.ReadResponseRMA.newBuilder()
-        .setReadLength(bytesRead).build();
-    byte[] responseBytes = readResponseRMA.toByteArray();
+    LOG.debug("All PUT request completed, notifying client...");
+    Protocol.ReadResponseRMA.Builder readResponseRMABuilder = Protocol.ReadResponseRMA.newBuilder()
+        .setReadLength(bytesRead);
+    if (StringUtils.isNotEmpty(errMsg)) {
+      readResponseRMABuilder.setErrorMsg(errMsg);
+    }
+    byte[] responseBytes = readResponseRMABuilder.build().toByteArray();
     UcxMessage replyMessage = new UcxMessage(message.getMessageId(),
         UcxMessage.Type.Reply,
-        ByteBuffer.wrap(responseBytes)); // reply -> Protocol.ReadResponseRMA
+        ByteBuffer.wrap(responseBytes));
     UcpMemory relyMemoryBlock = UcxMemoryPool.allocateMemory(AlluxioUcxUtils.METADATA_SIZE_COMMON,
         UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST);
     ByteBuffer replyBuffer = UcxUtils.getByteBufferView(relyMemoryBlock.getAddress(),
@@ -156,7 +161,6 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
     UcpRequest req = remoteConnection.getEndpoint().sendStreamNonBlocking(
         replyBuffer, new UcxCallback() {
       public void onSuccess(UcpRequest request) {
-        LOG.error("onSuccess");
         relyMemoryBlock.deregister();
         completed.complete(true);
       }
@@ -167,7 +171,7 @@ public class ReadRequestRMAHandler implements UcxRequestHandler {
         throw new UcxException(errorMsg);
       }
     });
-    LOG.info("Blockingly wait for completion reply msg sending...");
+    LOG.debug("Blockingly wait for completion reply msg sending...");
     boolean completeSending = false;
     try {
       completeSending = completed.get();

@@ -60,8 +60,7 @@ public class UcxReadTest {
   private static Logger LOG = LoggerFactory.getLogger(UcxReadTest.class);
   
   public static UcpServer mServer;
-//  public UcpContext mContext;
-  public static LocalCacheManager mLocalCacheManager;
+  public static CacheManager mCacheManager;
   private Random mRandom = new Random();
   private static InstancedConfiguration mConf = Configuration.copyGlobal();
   private static long sPageSize;
@@ -70,10 +69,6 @@ public class UcxReadTest {
 
   @BeforeClass
   public static void beforeClass() throws Exception {
-    System.out.println("start beforeClass...");
-    Properties props = new Properties();
-    props.setProperty(PropertyKey.LOGGER_TYPE.toString(), "Console");
-
     mConf.set(PropertyKey.USER_CLIENT_CACHE_DIRS, mTemp.getRoot().getAbsolutePath());
     mConf.set(PropertyKey.USER_CLIENT_CACHE_STORE_TYPE, PageStoreType.LOCAL);
     sPageSize = mConf.getBytes(PropertyKey.USER_CLIENT_CACHE_PAGE_SIZE);
@@ -84,11 +79,12 @@ public class UcxReadTest {
     CacheEvictor cacheEvictor = new FIFOCacheEvictor(cacheManagerOptions.getCacheEvictorOptions());
     PageStoreDir pageStoreDir = new LocalPageStoreDir(pageStoreOptions, pageStore, cacheEvictor);
     PageMetaStore pageMetaStore = new DefaultPageMetaStore(ImmutableList.of(pageStoreDir));
-    mLocalCacheManager = LocalCacheManager.create(cacheManagerOptions, pageMetaStore);
-    CommonUtils.waitFor("restore completed",
-        () -> mLocalCacheManager.state() == CacheManager.State.READ_WRITE,
+    mCacheManager = CacheManager.Factory.get(mConf, cacheManagerOptions, pageMetaStore);
+    CommonUtils.waitFor("CacheManager init complete",
+        () -> mCacheManager.state() == CacheManager.State.READ_WRITE,
         WaitForOptions.defaults().setTimeoutMs(10000));
-    mServer = new UcpServer(mLocalCacheManager);
+    mServer = new UcpServer(mCacheManager);
+    mServer.start();
   }
 
   class SampleData {
@@ -103,6 +99,17 @@ public class UcxReadTest {
       } catch (NoSuchAlgorithmException e) {
         /* No actions. Continue with other hash method. */
       }
+    }
+
+    public String getPartialMd5(int offset, int length) {
+      try {
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        md.update(mData, offset, length);
+        return Hex.encodeHexString(md.digest()).toLowerCase();
+      } catch (NoSuchAlgorithmException e) {
+        /* No actions. Continue with other hash method. */
+      }
+      return "";
     }
   }
 
@@ -119,10 +126,77 @@ public class UcxReadTest {
     int totalPages = numOfPages;
     for (int i=0; i<totalPages; i++) {
       PageId pageId = new PageId(new AlluxioURI(ufsPath).hash(), i);
-      mLocalCacheManager.cache(pageId, CacheContext.defaults(), externalDataSupplier);
+      mCacheManager.cache(pageId, CacheContext.defaults(), externalDataSupplier);
     }
   }
 
+  /**
+   * Sanity test for standalone UcpServer, comment out UcpServer start in @BeforeClass
+   * before test.
+   * @throws Exception
+   */
+  /*
+  @Test
+  public void testStandaloneServer() throws Exception {
+    String dummyUfsPath = "file:///root/testfolder/file1";
+    InetSocketAddress serverAddr = new InetSocketAddress(
+        "172.31.21.70", UcpServer.BIND_PORT);
+    System.out.println("Connecting to " + serverAddr.toString());
+    Protocol.OpenUfsBlockOptions openUfsBlockOptions =
+        Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(dummyUfsPath)
+            .setOffsetInFile(0).setBlockSize(sPageSize)
+            .setNoCache(true)
+            .setMountId(0)
+            .build();
+
+    UcpContext ucpContext = new UcpContext(new UcpParams()
+        .requestStreamFeature()
+        .requestTagFeature()
+        .requestRmaFeature()
+        .requestWakeupFeature());
+    UcpWorker worker = ucpContext.newWorker(new UcpWorkerParams()
+        .requestWakeupRMA()
+        .requestThreadSafety());
+
+    int iteration = 10;
+    Protocol.ReadRequestRMA.Builder requestRMABuilder = Protocol.ReadRequestRMA.newBuilder()
+        .setOpenUfsBlockOptions(openUfsBlockOptions);
+    Protocol.ReadRequest.Builder requestBuilder = Protocol.ReadRequest.newBuilder()
+        .setOpenUfsBlockOptions(openUfsBlockOptions);
+    UcxDataReader reader = new UcxDataReader(serverAddr, worker, null, requestRMABuilder);
+    Stopwatch stopwatch = Stopwatch.createStarted();
+    for (int iter =0;iter<iteration;iter++) {
+      System.out.println(String.format("iteration:%d", iter));
+      reader.acquireServerConn();
+      long position = mRandom.nextInt((int)sPageSize);
+      int length = (int)(sPageSize - position % sPageSize);
+      ByteBuffer buffer = ByteBuffer.allocateDirect(length);
+      System.out.println(String.format("reading position:%s:length:%s", position, length));
+      try {
+        int bytesRead = reader.read(position, buffer, length);
+        buffer.clear();
+        System.out.println("buffer:" + buffer.toString() + ",bytesRead:" + bytesRead);
+        byte[] readContent = new byte[bytesRead];
+        buffer.get(readContent);
+        String readContentMd5 = "";
+        try {
+          MessageDigest md = MessageDigest.getInstance("MD5");
+          md.update(readContent);
+          readContentMd5 = Hex.encodeHexString(md.digest()).toLowerCase();
+        } catch (NoSuchAlgorithmException e) {
+        }
+        System.out.println(String.format("readContentMd5:%s",
+            readContentMd5));
+      } catch (IOException e) {
+        System.out.println("IOException on position:" + position + ":length:" + length);
+        throw new RuntimeException(e);
+      }
+    }
+    long elapsedInMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
+    System.out.println(String.format("Total %d iterations done, time taken in ms:%d",
+        iteration, elapsedInMs));
+  }
+  */
 
   @Test
   public void testClientServer() throws Exception {
@@ -131,9 +205,8 @@ public class UcxReadTest {
     int numOfPages = 5;
     prefill(dummyUfsPath, numOfPages, sampleData);
     InetSocketAddress serverAddr = new InetSocketAddress(
-//        "172.31.21.70", UcpServer.BIND_PORT);
         InetAddress.getLocalHost(), UcpServer.BIND_PORT);
-//    System.out.println("Connecting to " + serverAddr.toString());
+    System.out.println("Connecting to " + serverAddr.toString());
     Protocol.OpenUfsBlockOptions openUfsBlockOptions =
         Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(dummyUfsPath)
             .setOffsetInFile(0).setBlockSize(numOfPages * sPageSize)
@@ -161,28 +234,28 @@ public class UcxReadTest {
       System.out.println(String.format("iteration:%d", iter));
       reader.acquireServerConn();
       for (int i = 0; i < numOfPages; i++) {
-        long position = i * sPageSize;// + mRandom.nextInt(pageSize);
-        int length = (int)sPageSize;
+        long position = i * sPageSize + mRandom.nextInt((int)sPageSize);
+        int length = (int)(sPageSize - position % sPageSize);
         ByteBuffer buffer = ByteBuffer.allocateDirect(length);
         System.out.println(String.format("reading position:%s:length:%s", position, length));
         try {
-          reader.read(position, buffer, length);
-//        buffer.clear();
-        System.out.println("buffer:" + buffer.toString());
-        byte[] readContent = new byte[length];
-        buffer.get(readContent);
-        String readContentMd5 = "";
-        try {
-          MessageDigest md = MessageDigest.getInstance("MD5");
-          md.update(readContent);
-          readContentMd5 = Hex.encodeHexString(md.digest()).toLowerCase();
-        } catch (NoSuchAlgorithmException e) {
-          /* No actions. Continue with other hash method. */
-        }
-        System.out.println(String.format("readContentMd5:%s:sample data md5:%s",
-            readContentMd5, sampleData.mMd5));
-          Assert.assertEquals("md5 not equal", sampleData.mMd5, readContentMd5);
-//        Assert.assertTrue(Arrays.equals(readContent, sampleData.mData));
+          int bytesRead = reader.read(position, buffer, length);
+          buffer.clear();
+          System.out.println("buffer:" + buffer.toString() + ",bytesRead:" + bytesRead);
+          byte[] readContent = new byte[bytesRead];
+          buffer.get(readContent);
+          String readContentMd5 = "";
+          String sampleDataMd5 = sampleData.getPartialMd5((int)(position % sPageSize), length);
+          try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            md.update(readContent);
+            readContentMd5 = Hex.encodeHexString(md.digest()).toLowerCase();
+          } catch (NoSuchAlgorithmException e) {
+            /* No actions. Continue with other hash method. */
+          }
+          System.out.println(String.format("readContentMd5:%s:sample data md5:%s",
+              readContentMd5, sampleDataMd5));
+          Assert.assertEquals("md5 not equal", sampleDataMd5, readContentMd5);
         } catch (IOException e) {
           System.out.println("IOException on position:" + position + ":length:" + length);
           throw new RuntimeException(e);
@@ -190,7 +263,7 @@ public class UcxReadTest {
       }
     }
     long elapsedInMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
-    System.out.println(String.format("Total %d iteratons done, time taken in ms:%d",
+    System.out.println(String.format("Total %d iterations done, time taken in ms:%d",
         iteration, elapsedInMs));
   }
 }

@@ -79,21 +79,6 @@ public class StressUcxBench extends StressWorkerBench {
     for (int i = 0; i < numOfFiles; i++) {
         mFilePaths[i] = String.format("%s%d", mParameters.mBasePath, i+1);
     }
-//    try (CloseableResource<BlockWorkerClient> workerClient =
-//             mFsContext.acquireBlockWorkerClient(liveWorkers.get(0).getNetAddress())) {
-//      LoadFileRequest.Builder loadFileReqBuilder = LoadFileRequest.newBuilder();
-//      for (int i = 0; i < numOfFiles; i++) {
-//        mFilePaths[i] = String.format("%s-%d", mParameters.mBasePath, i);
-//        loadFileReqBuilder.addUfsStatus(
-//            new UfsFileStatus(mFilePaths[i], "", mFileSize,
-//                (Long) 1234L, "lucyge", "staff",
-//                (short) 0, 4096L).toProto());
-//        loadFileReqBuilder.setOptions(UfsReadOptions.newBuilder().build());
-//      }
-//      ListenableFuture<LoadFileResponse> respFut = workerClient.get().loadFile(loadFileReqBuilder.build());
-//      LoadFileResponse resp = respFut.get();
-//      LOG.info("Load file resp:{}", resp);
-//    }
   }
 
   @Override
@@ -220,9 +205,7 @@ public class StressUcxBench extends StressWorkerBench {
     @Override
     public Void call() {
       try {
-        LOG.info("before runInternal");
         runInternal();
-        LOG.info("after runInternal");
       } catch (Exception e) {
         LOG.error(Thread.currentThread().getName() + ": failed", e);
         mResult.addErrorMessage(e.getMessage());
@@ -240,7 +223,6 @@ public class StressUcxBench extends StressWorkerBench {
 
 
     public void runInternal() throws Exception {
-      LOG.info("start runInternal...");
       String ufsFilePath = mFilePaths[mTargetFileIndex];
       Protocol.OpenUfsBlockOptions openUfsBlockOptions =
           Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(ufsFilePath)
@@ -257,7 +239,6 @@ public class StressUcxBench extends StressWorkerBench {
           .requestWakeupRMA()
           .requestThreadSafety());
 
-      LOG.info("line 260..");
       Protocol.ReadRequestRMA.Builder requestRMABuilder = Protocol.ReadRequestRMA.newBuilder()
           .setOpenUfsBlockOptions(openUfsBlockOptions);
       mReader = new UcxDataReader(mUcpServerAddr, ucpWorker, null, requestRMABuilder);
@@ -267,7 +248,6 @@ public class StressUcxBench extends StressWorkerBench {
       mResult.setRecordStartMs(recordMs);
 
       long waitMs = mContext.getStartMs() - CommonUtils.getCurrentMs();
-      LOG.info("line 270..");
       if (waitMs < 0) {
         throw new IllegalStateException(String.format(
             "Thread missed barrier. Increase the start delay. start: %d current: %d",
@@ -282,7 +262,6 @@ public class StressUcxBench extends StressWorkerBench {
       SAMPLING_LOG.info("Test started and recording will be started after the warm up at {}",
           CommonUtils.convertMsToDate(recordMs, dateFormat));
 
-      LOG.info("line 284..");
       WorkerBenchCoarseDataPoint dp = new WorkerBenchCoarseDataPoint(
           Long.parseLong("0"),
           Thread.currentThread().getId());
@@ -290,16 +269,12 @@ public class StressUcxBench extends StressWorkerBench {
       List<Long> throughputList = new ArrayList<>();
       long lastSlice = 0;
 
-      LOG.info("line 293..");
       while (!Thread.currentThread().isInterrupted()
           && CommonUtils.getCurrentMs() < mContext.getEndMs()) {
         // Keep reading the same file
-        LOG.info("line 297..");
         long startMs = CommonUtils.getCurrentMs() - recordMs;
-        LOG.info("line 299..");
         BenchThread.ApplyOperationOutput output = applyOperation();
         if (startMs > 0) {
-          LOG.info("line 302..");
           if (output.mBytesRead > 0) {
             mResult.setIOBytes(mResult.getIOBytes() + output.mBytesRead);
             slice.mCount += 1;
