@@ -12,16 +12,22 @@ public class UcxMemoryPool {
 
   // Unpooled allocating
   public static UcpMemory allocateMemory(long length, int memType) {
-    Preconditions.checkArgument(memType == UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST,
-        "Currently only support allocating direct memory(buffer)");
-    // alloc + register =>
-    // check ucp_mem_map for behavior
-    // https://openucx.readthedocs.io/en/master/api/
-    // file/ucp_8h.html?highlight=ucp_mem_map
-    // #_CPPv411ucp_mem_map13ucp_context_hPK20ucp_mem_map_params_tP9ucp_mem_h
-    ByteBuffer directBuf = ByteBuffer.allocateDirect((int)length);
-    UcpMemory allocMem = registerMemory(UcxUtils.getAddress(directBuf), length);
-    return allocMem;
+    if (memType == UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_HOST) {
+      ByteBuffer directBuf = ByteBuffer.allocateDirect((int) length);
+      UcpMemory allocMem = registerMemory(UcxUtils.getAddress(directBuf), length);
+      return allocMem;
+    } else if (memType == UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_CUDA) {
+      // Untested because lack of supported fabric hardwards (GPU with NVLink)
+      Preconditions.checkArgument(
+          UcsConstants.MEMORY_TYPE.isMemTypeSupported(UcpServer.sGlobalContext.getMemoryTypesMask(),
+              UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_CUDA),
+          "CUDA mem not supported");
+      UcpMemMapParams memMapParams = new UcpMemMapParams().allocate().setLength(length)
+          .setMemoryType(memType);
+      return UcpServer.sGlobalContext.memoryMap(memMapParams);
+    } else {
+      throw new IllegalStateException("Unrecognized memType.");
+    }
   }
 
   public static UcpMemory registerMemory(long addr, long length) {

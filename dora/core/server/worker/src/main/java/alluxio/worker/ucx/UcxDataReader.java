@@ -97,25 +97,27 @@ public class UcxDataReader implements PositionReader {
     }
     // use RMA API
     if (mRequestRMABuilder != null) {
-      return readInternalRMA(position, buffer, length);
+      Preconditions.checkArgument(buffer.byteBuffer().isDirect(), "ByteBuffer must be direct buffer");
+      Preconditions.checkArgument(buffer.byteBuffer().position() == 0,
+          "Provided ByteBuffer holder has to be empty");
+      // register this result memory buffer
+      UcpMemory resultMemBlock = UcxMemoryPool.registerMemory(
+          UcxUtils.getAddress(buffer.byteBuffer()), length);
+      return readInternalRMA(position, resultMemBlock, length);
     }
     return -1;
   }
 
-  public int readInternalRMA(long position, ReadTargetBuffer buffer, int length)
+  public int readInternalRMA(long position, UcpMemory resultMemoryBlock, int length)
       throws IOException {
-    Preconditions.checkArgument(buffer.byteBuffer().isDirect(), "ByteBuffer must be direct buffer");
-    Preconditions.checkArgument(buffer.byteBuffer().position() == 0,
-        "Provided ByteBuffer holder has to be empty");
-    // register this result memory buffer, pack this memory region info and send read req over.
-    UcpMemory resultMemBlock = UcxMemoryPool.registerMemory(
-        UcxUtils.getAddress(buffer.byteBuffer()), length);
+    Preconditions.checkNotNull(mRequestRMABuilder, "Must provide ReadRequestRMA");
+    // pack this memory region info and send read req over.
     // pack to rkey buf
-    ByteBuffer rkeyBuf = resultMemBlock.getRemoteKeyBuffer();
+    ByteBuffer rkeyBuf = resultMemoryBlock.getRemoteKeyBuffer();
     Protocol.ReadRequestRMA.Builder builder = mRequestRMABuilder.get()
         .setLength(length)
         .setOffset(position)
-        .setRemoteMemAddr(resultMemBlock.getAddress())
+        .setRemoteMemAddr(resultMemoryBlock.getAddress())
         .setRkeyBuf(ByteString.copyFrom(rkeyBuf))
         .clearCancel();
     Protocol.ReadRequestRMA readRequest = builder.build();
@@ -158,7 +160,7 @@ public class UcxDataReader implements PositionReader {
     Protocol.ReadResponseRMA rmaReadResponse = Protocol.ReadResponseRMA.parseFrom(
         replyMessage.getRPCMessage());
     relyMemoryBlock.deregister();
-    resultMemBlock.deregister(); // now target buffer available for caller to access
+    resultMemoryBlock.deregister(); // now target buffer available for caller to access
     LOG.debug("rmaReadResponse:{}", rmaReadResponse);
     return (int)rmaReadResponse.getReadLength();
   }

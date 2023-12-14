@@ -1,5 +1,6 @@
 package alluxio.worker.ucx;
 
+import static org.junit.Assert.assertTrue;
 import alluxio.AlluxioURI;
 import alluxio.client.file.CacheContext;
 import alluxio.client.file.cache.CacheManager;
@@ -34,19 +35,24 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.openucx.jucx.ucp.UcpContext;
+import org.openucx.jucx.ucp.UcpMemMapParams;
+import org.openucx.jucx.ucp.UcpMemory;
 import org.openucx.jucx.ucp.UcpParams;
 import org.openucx.jucx.ucp.UcpWorker;
 import org.openucx.jucx.ucp.UcpWorkerParams;
+import org.openucx.jucx.ucs.UcsConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -197,6 +203,48 @@ public class UcxReadTest {
         iteration, elapsedInMs));
   }
   */
+
+  @Test
+  @Ignore
+  public void testReadToGPUMem() throws Exception {
+    UcpContext ucpContext = new UcpContext(new UcpParams()
+        .requestTagFeature()
+        .requestRmaFeature()
+        .requestWakeupFeature());
+    Assert.assertTrue("CUDA mem not supported",
+        UcsConstants.MEMORY_TYPE.isMemTypeSupported(ucpContext.getMemoryTypesMask(),
+            UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_CUDA));
+
+    String dummyUfsPath = "hdfs://localhost:9000/randomUfsPath";
+    SampleData sampleData = new SampleData(generateRandomData(1024 * 1024));
+    int numOfPages = 1;
+    prefill(dummyUfsPath, numOfPages, sampleData);
+    // Replace correct NIC address
+    InetSocketAddress serverAddr = new InetSocketAddress(
+        InetAddress.getLocalHost(), UcpServer.BIND_PORT);
+    System.out.println("Connecting to " + serverAddr.toString());
+    long position = mRandom.nextInt((int)sPageSize);
+    int length = (int)(sPageSize - position % sPageSize);
+
+    UcpWorker worker = ucpContext.newWorker(new UcpWorkerParams()
+        .requestWakeupRMA()
+        .requestThreadSafety());
+    UcpMemory gpuMemBlock = UcxMemoryPool.allocateMemory(length, UcsConstants.MEMORY_TYPE.UCS_MEMORY_TYPE_CUDA);
+
+    Protocol.OpenUfsBlockOptions openUfsBlockOptions =
+        Protocol.OpenUfsBlockOptions.newBuilder().setUfsPath(dummyUfsPath)
+            .setOffsetInFile(0).setBlockSize(numOfPages * sPageSize)
+            .setNoCache(true)
+            .setMountId(0)
+            .build();
+    Protocol.ReadRequestRMA.Builder requestRMABuilder = Protocol.ReadRequestRMA.newBuilder()
+        .setOpenUfsBlockOptions(openUfsBlockOptions);
+    UcxDataReader reader = new UcxDataReader(serverAddr, worker, null, requestRMABuilder);
+    int bytesRead = reader.readInternalRMA(position, gpuMemBlock, length);
+    System.out.println("bytesRead:" + bytesRead);
+    Assert.assertEquals(length, bytesRead);
+  }
+
 
   @Test
   public void testClientServer() throws Exception {
